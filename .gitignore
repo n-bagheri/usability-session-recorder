@@ -218,3 +218,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Usability recordings and local authentication
+sessions/
+recordings/
+*.jsonl
+*.mkv
+*.mp4
+*.mov
+*.wav
+*.mp3
+credentials*
+config.local.*

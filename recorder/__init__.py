@@ -1,0 +1,1 @@
+"""Standalone OBS usability recorder."""
