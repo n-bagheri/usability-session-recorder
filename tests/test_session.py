@@ -148,3 +148,80 @@ class SessionTests(unittest.TestCase):
             session.stop()
             self.assertFalse(obs.active)
             self.assertFalse(session.active)
+
+    def test_confirmation_timeout_keeps_events_and_blocks_duplicate_start(self):
+        from recorder.obs import RecordingConfirmationTimeout
+        import sys
+        class Listener:
+            def __init__(self, **kwargs):
+                pass
+            def start(self):
+                pass
+            def wait(self):
+                pass
+            def stop(self):
+                pass
+            def join(self, timeout=None):
+                pass
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)/'video.mkv'
+            source.write_bytes(b'test video')
+            obs = FakeOBS(source)
+            obs.active = False
+            from unittest.mock import Mock
+            obs.start_record = Mock()
+            session = Session(obs,directory,'in-person',[0,0,100,100],lambda:{})
+            with patch.dict(sys.modules,{'pynput':SimpleNamespace(mouse=SimpleNamespace(Listener=Listener))}), \
+                 patch('recorder.session.wait_for_recording',side_effect=RecordingConfirmationTimeout('delayed')):
+                with self.assertRaises(RecordingConfirmationTimeout):
+                    session.start()
+            session.event('click',5,6,pressed=True)
+            with self.assertRaises(RuntimeError):
+                session.start()
+            obs.start_record.assert_called_once()
+            self.assertTrue(session.active)
+            self.assertEqual(session.meta['state'],'start_uncertain')
+            # Even a stale inactive status must not suppress the actual StopRecord.
+            obs.stop_record = Mock(return_value=SimpleNamespace(output_path=str(source)))
+            session.stop()
+            obs.stop_record.assert_called_once()
+            self.assertFalse(session.active)
+            self.assertEqual(len((session.folder/'events.jsonl').read_text().splitlines()),1)
+
+    def test_geometry_failure_does_not_drop_raw_mouse_event(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as directory:
+            provider = Mock(side_effect=[{},OSError('foreground inaccessible')])
+            session = Session(None,directory,'zoom',[0,0,10,10],provider)
+            session.active = True
+            session.stream = (session.folder/'events.jsonl').open('a')
+            session.event('move',3,4)
+            session.stream.close()
+            event = json.loads((session.folder/'events.jsonl').read_text())
+            self.assertEqual(event['x'],3)
+            self.assertIn('geometry_error',event)
+            self.assertEqual(event['target']['classification'],'uncertain')
+
+    def test_session_confirms_delayed_activation_without_resending_start(self):
+        import sys
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as directory:
+            obs = FakeOBS('unused')
+            inactive = SimpleNamespace(output_active=False,output_paused=False,output_duration=0)
+            paused = SimpleNamespace(output_active=True,output_paused=True,output_duration=0)
+            ready = SimpleNamespace(output_active=True,output_paused=False,output_duration=200)
+            obs.get_record_status = Mock(side_effect=[inactive,inactive,paused,ready,ready])
+            obs.start_record = Mock()
+            listener = Mock()
+            mouse = SimpleNamespace(Listener=Mock(return_value=listener))
+            session = Session(obs,directory,'in-person',[0,0,100,100],lambda:{})
+            with patch.dict(sys.modules,{'pynput':SimpleNamespace(mouse=mouse)}),patch('time.sleep'):
+                session.start()
+            self.assertEqual(session.meta['state'],'recording')
+            self.assertEqual(len(session.sync['startup_observations']),4)
+            obs.start_record.assert_called_once()
+            with self.assertRaises(RuntimeError):
+                session.start()
+            self.assertTrue(session.active)
+            session.active = False
+            session.stream.close()

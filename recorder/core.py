@@ -49,6 +49,9 @@ def generate_heatmaps(folder):
     rect = meta['capture_rect']
     with (folder/'events.jsonl').open() as stream:
         events = [json.loads(line) for line in stream if line.strip()]
+    if meta.get('target_calibration'):
+        from .analysis import generate_target_heatmaps
+        return generate_target_heatmaps(folder, meta, events)
     left, top, width, height = rect
     for kind in ('move', 'click'):
         grid = density(events, rect, kind)
@@ -60,3 +63,5 @@ def generate_heatmaps(folder):
         fig.colorbar(plot, ax=ax, label='Events per bin')
         fig.savefig(folder/f'{kind}_heatmap.png', dpi=150)
         plt.close(fig)
+
+    return {'alignment': {'status': 'unverified'}, 'legacy': True}

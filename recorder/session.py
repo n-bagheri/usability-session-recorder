@@ -7,11 +7,15 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from .core import estimate_origin
+from .obs import wait_for_recording
+from .targeting import classify
 
 
 class Session:
-    def __init__(self, obs, root, mode, rect, geometry_provider):
+    def __init__(self, obs, root, mode, rect, geometry_provider, target=None, target_provider=None):
         self.obs, self.geometry = obs, geometry_provider
+        self.target, self.target_provider = target, target_provider
+        self.start_lock = threading.Lock()
         self.folder = Path(root) / (datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:8])
         self.folder.mkdir(parents=True)
         self.lock = threading.Lock()
@@ -19,15 +23,15 @@ class Session:
         self.stream = None
         self.active = False
         self.counts = {}
-        self.last_move = 0
-        self.meta = {'schema_version': 1, 'mode': mode, 'capture_rect': rect,
+        self.target_counts = {"inside": 0, "outside": 0, "uncertain": 0}
+        self.meta = {'schema_version': 2, 'target_calibration': target, 'mode': mode, 'capture_rect': rect,
                      'created_utc': datetime.now(timezone.utc).isoformat(),
                      'clock': 'time.perf_counter_ns', 'state': 'preparing',
                      'geometry_at_start': geometry_provider(),
                      'coordinate_space': 'physical desktop pixels',
-                     'move_sampling_hz': 60,
+                     'move_sampling_hz': None, 'input_policy': 'All mouse callbacks retained; no target filtering at capture',
                      'audio': 'Existing OBS configuration; mode is a label only'}
-        self.sync = {'samples': [], 'markers': [], 'manual_correction_ms': 0,
+        self.sync = {'samples': [], 'markers': [], 'manual_correction_ms': 0, 'startup_observations': [],
                      'method': 'OBS outputDuration midpoint estimate; not frame accurate',
                      'correction_convention': 'video_seconds=(event_ns-origin_ns)/1e9+manual_correction_ms'}
         self.save()
@@ -44,18 +48,30 @@ class Session:
         with self.lock:
             if not self.active:
                 return
-            if kind == 'move' and now-self.last_move < 1e9/60:
-                return
-            if kind == 'move':
-                self.last_move = now
             event = {'type': kind, 'monotonic_ns': now, **extra}
             if x is not None:
                 event.update(x=x, y=y)
             try:
                 event.update(self.geometry())
+            except Exception as exc:
+                event['geometry_error'] = str(exc)
+            if x is not None:
+                snapshot = None
+                observed_before = time.perf_counter_ns()
+                if self.target and self.target_provider:
+                    try:
+                        snapshot = self.target_provider(self.target['identity']['hwnd'], x, y)
+                    except Exception as exc:
+                        snapshot = {'error': str(exc)}
+                event['target_observation'] = snapshot
+                event['observation_interval_ns'] = [observed_before, time.perf_counter_ns()]
+                event['target'] = classify(x, y, self.target, snapshot)
+            try:
                 self.stream.write(json.dumps(event)+'\n')
                 self.stream.flush()
                 self.counts[kind] = self.counts.get(kind, 0)+1
+                if 'target' in event:
+                    self.target_counts[event['target']['classification']] += 1
             except Exception as exc:
                 self.meta['input_error'] = str(exc)
 
@@ -65,32 +81,61 @@ class Session:
         after = time.perf_counter_ns()
         if not status.output_active or status.output_paused:
             raise RuntimeError('OBS recording is inactive or paused; do not pause externally')
-        sample = dict(estimate_origin(before, after, status.output_duration),
-                      before_ns=before, after_ns=after, output_duration_ms=status.output_duration)
+        self._add_sample(before, after, status.output_duration)
+
+    def _add_sample(self, before, after, duration):
+        sample = dict(estimate_origin(before, after, duration),
+                      before_ns=before, after_ns=after, output_duration_ms=duration)
         self.sync['samples'].append(sample)
         self.sync['origin_ns'] = min(self.sync['samples'], key=lambda s:s['half_rtt_ns'])['origin_ns']
         self.save()
 
+    def confirm_recording(self):
+        def observe(data):
+            self.sync['startup_observations'].append(data)
+            self.save()
+        if not self.active or not self.meta.get('owns_recording_attempt'):
+            raise RuntimeError('No live recording attempt to confirm')
+        try:
+            before, after, duration = wait_for_recording(self.obs.get_record_status, observe)
+        except Exception:
+            self.meta['state'] = 'status_uncertain'
+            self.save()
+            raise
+        self._add_sample(before, after, duration)
+        self.meta['state'] = 'recording'
+        self.save()
+
     def start(self):
+        if not self.start_lock.acquire(blocking=False):
+            raise RuntimeError('Start is already in progress')
+        try:
+            if self.meta.get('owns_recording_attempt') or self.active:
+                raise RuntimeError('Start was already attempted. Check OBS or stop this session; no duplicate request sent.')
+            return self._start()
+        finally:
+            self.start_lock.release()
+
+    def _start(self):
         from pynput import mouse
         if self.obs.get_record_status().output_active:
             raise RuntimeError('OBS is already recording; stop it before starting a session')
         self.stream = (self.folder/'events.jsonl').open('a', encoding='utf-8')
         self.active = True
-        self.listener = mouse.Listener(
-            on_move=lambda x,y:self.event('move',x,y),
-            on_click=lambda x,y,b,p:self.event('click',x,y,button=str(b),pressed=p),
-            on_scroll=lambda x,y,dx,dy:self.event('scroll',x,y,dx=dx,dy=dy))
         try:
+            self.listener = mouse.Listener(
+                on_move=lambda x,y:self.event('move',x,y),
+                on_click=lambda x,y,b,p:self.event('click',x,y,button=str(b),pressed=p),
+                on_scroll=lambda x,y,dx,dy:self.event('scroll',x,y,dx=dx,dy=dy))
             self.listener.start()
             self.listener.wait()
             self.meta['start_request_ns'] = time.perf_counter_ns()
             self.meta['owns_recording_attempt'] = True
             self.obs.start_record()
             self.meta['start_response_ns'] = time.perf_counter_ns()
-            self.meta['state'] = 'recording'
+            self.meta['state'] = 'starting'
             self.save()
-            self.sample()
+            self.confirm_recording()
         except Exception as exc:
             self.meta['error'] = str(exc)
             # StartRecord may have succeeded even if its response was lost.
@@ -114,16 +159,21 @@ class Session:
     def stop(self):
         if not self.meta.get('owns_recording_attempt'):
             raise RuntimeError('This session has not attempted to start OBS; no recording was stopped')
-        if self.meta['state'] == 'recording':
+        if self.meta['state'] != 'stopped':
             try:
                 self.sample()
             except Exception as exc:
                 self.meta['sync_warning'] = str(exc)
         # Do not close input capture until OBS acknowledges stop. Caller can retry.
-        status = self.obs.get_record_status()
-        if status.output_active:
-            result = self.obs.stop_record()
-            self.meta['obs_output_path'] = result.output_path
+        if self.meta['state'] != 'stopped':
+            try:
+                # Do not trust a single inactive status: it may be stale during startup.
+                result = self.obs.stop_record()
+                self.meta['obs_output_path'] = result.output_path
+            except Exception:
+                self.meta['state'] = 'stop_uncertain'
+                self.save()
+                raise
         self.meta['stop_response_ns'] = time.perf_counter_ns()
         self.active = False
         if self.listener:
@@ -133,6 +183,7 @@ class Session:
             if self.stream:
                 self.stream.close()
         self.meta['event_counts'] = self.counts
+        self.meta['target_counts'] = self.target_counts
         self.meta['state'] = 'stopped'
         self.save()
         source = self.meta.get('obs_output_path')
