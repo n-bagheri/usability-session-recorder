@@ -230,3 +230,16 @@ recordings/
 *.mp3
 credentials*
 config.local.*
+
+# Research artifacts, including sessions saved elsewhere inside the checkout
+[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]-*/
+review_cache/
+review_history/
+research_analysis/
+review.json
+review_suggestions.json
+frame_mapping.json
+metadata.json
+sync.json
+analysis.json
+reference-*.png

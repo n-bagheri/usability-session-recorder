@@ -225,3 +225,26 @@ class SessionTests(unittest.TestCase):
             self.assertTrue(session.active)
             session.active = False
             session.stream.close()
+
+    def test_stop_confirmation_retry_does_not_send_duplicate_stop(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/'original.mkv';source.write_bytes(b'test video')
+            obs=FakeOBS(source)
+            session=Session(obs,directory,'in-person',[0,0,100,100],lambda:{})
+            session.meta['owns_recording_attempt']=True;session.active=True
+            obs.stop_record=Mock(return_value=SimpleNamespace(output_path=str(source)))
+            with patch('recorder.session.wait_for_stopped',side_effect=RuntimeError('still stopping')):
+                with self.assertRaises(RuntimeError):session.stop()
+            self.assertTrue(session.active)
+            self.assertTrue(session.meta['stop_acknowledged'])
+            with patch('recorder.session.wait_for_stopped'):
+                session.stop()
+            obs.stop_record.assert_called_once()
+            self.assertFalse(session.active)
+
+    def test_hook_readiness_failure_prevents_unbounded_start_wait(self):
+        from recorder.session import wait_listener_ready
+        from unittest.mock import Mock
+        with self.assertRaises(RuntimeError):
+            wait_listener_ready(Mock(wait=Mock(side_effect=RuntimeError('hook unavailable'))))

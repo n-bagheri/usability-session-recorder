@@ -1,14 +1,20 @@
 # Windows Usability Session Recorder
 
-Standalone Python/Tk desktop controller for OBS Studio (obs-websocket v5).
-It captures Windows global mouse input via pynput, without reading or modifying
-MapGen or any other application's source. OBS records all video and audio.
+A standalone Python/Tkinter research recorder. **OBS Studio records all video and
+audio**; this app controls OBS v5, retains global Windows mouse input, calibrates
+Chrome/OBS geometry, and reviews saved video without accessing or modifying MapGen.
+
+New calibration and QA are **not yet validated on real Windows/Zoom hardware**.
+A computed transform is not proof of accuracy. Measurements and explicit uncertainty
+are part of the workflow, not optional claims added to a heatmap.
 
 ## Windows setup
 
-1. On Windows 10/11, install 64-bit Python 3.11+ from python.org, including Tcl/Tk, and OBS Studio
-   28+ from obsproject.com. Use a local interactive Windows desktop.
-2. In PowerShell, from this checkout:
+1. Install 64-bit Python 3.11+ with Tcl/Tk, OBS Studio 28+, Google Chrome, and
+   **FFmpeg + ffprobe** on PATH. Use trusted releases from python.org, obsproject.com,
+   google.com/chrome, and ffmpeg.org's Windows build links. Restart Recorder after
+   changing PATH. FFmpeg is used only to decode/analyze saved OBS files.
+2. From the checkout in PowerShell (initial setup only):
 
    ```powershell
    py -3 -m venv .venv
@@ -17,307 +23,214 @@ MapGen or any other application's source. OBS records all video and audio.
    .\.venv\Scripts\python.exe -m recorder
    ```
 
-3. In OBS: Tools → WebSocket Server Settings → enable server on port **4455**,
-   enable authentication, and copy its password into the GUI. The app connects to
-   localhost only. Passwords stay in memory, never in session files. Optional
-   `OBS_WEBSOCKET_PASSWORD` can supply it from the process environment. Do not
-   expose this port publicly.
-4. Create an OBS scene with Display Capture or Window Capture for Chrome/MapGen.
-   Enable capture cursor. Check the preview, scaling, cropping, and output size.
-   Prefer MKV recording to protect against interrupted recordings. Use a local,
-   writable output directory with enough space for both the OBS original and the
-   session copy. Disable automatic output splitting and automatic remux for the
-   MVP. Do not pause recordings or start/stop them outside this app.
-5. Configure audio in OBS, not this recorder. In-person: microphone enabled.
-   Zoom: microphone plus desktop/Zoom audio enabled, with headphones to avoid
-   feedback. Confirm the meters and make a short playback test for both speakers.
-   The GUI mode selector labels metadata; it does **not** change OBS audio sources.
+3. In OBS → Tools → WebSocket Server Settings, enable authentication on
+   **localhost:4455**. Enter the password in Recorder. Passwords stay in memory;
+   they are never written to configuration, research files or logs. SDK password
+   logging is suppressed. Do not expose the WebSocket port publicly.
+4. Set the OBS program scene to the intended Chrome **Window Capture** source.
+   Enable capture cursor. Use MKV, a local writable output folder and enough disk
+   space for the OBS original plus a session copy. Disable splitting, automatic
+   remux, source filters, advanced recording rescale, and video sources layered
+   above Chrome. Nested/grouped sources, rotation/flips and some bounds modes are
+   rejected rather than approximated. See [geometry support](docs/ARCHITECTURE.md).
+5. Configure OBS microphone for in-person sessions; microphone plus desktop/Zoom
+   audio for remote sessions. Use headphones and test playback of both voices.
+   The GUI mode labels a session; it does not change OBS's audio settings.
+6. Chrome must expose a native UI Automation webpage **Document**. If auto-calibration
+   reports none, check Chrome accessibility support; where appropriate close Chrome
+   after saving work and launch it with `--force-renderer-accessibility`. Recorder
+   does not change Chrome profiles or enable debugging. A screenshot-guided manual
+   fallback is available in Advanced and remains explicitly unverified.
 
-## Session workflow
+Dependencies are the existing OBS/pynput/NumPy/Matplotlib stack plus Windows-only
+`comtypes` for read-only UI Automation. Pillow, also used by Matplotlib, is declared explicitly for supported image APIs. No browser
+extension, DOM injection, custom recording engine, MapGen hooks or `.bat` launcher.
 
-- Get participant consent for video, cursor activity, and conversation recording.
-  Close personal windows and notifications. All desktop mouse input is logged,
-  including input outside MapGen; no keyboard input or window titles are logged.
-- Connect to OBS. Set the local sessions folder (default `sessions/`, Git ignored).
-- Click **Refresh Chrome windows**, select the MapGen Chrome window (title is a
-  chooser label; HWND, process ID, process creation time and class identify it).
-  Select the same window in OBS Window Capture. No MapGen repository access occurs.
-- Click **Pick content corners**. Recorder minimizes. Within 30 seconds click the
-  top-left content pixel and then the bottom-right content pixel, inclusive. Exclude
-  tabs, address/bookmarks bars, borders, and any Chrome side panel. These clicks are
-  delivered to Chrome, so use a safe page state. Both corners must hit the selected
-  unobscured window, with stable geometry. Calibration is required for each session
-  configuration; raw browser titles are not written into recordings.
-- The legacy desktop rectangle is used only for legacy/unselected-session analysis,
-  not for new MapGen-only heatmaps. Physical pixels are used throughout; monitors
-  left/above primary can have negative coordinates. Do not enter DPI-logical pixels.
-- Movement and ordinary resizing are tracked per event. Insets are calibrated in
-  physical pixels at a known DPI and scaled at DPI changes. Different content sizes
-  and DPI values get separate heatmaps, not one stretched aggregate. Calibrate in
-  the intended normal/maximized state: switching that state mid-session is uncertain
-  until a new session is calibrated, since Chrome's toolbar/border height can change.
-  Do not change tab, browser zoom, side panels, bookmarks-bar visibility, fullscreen,
-  OBS scene/transform, or browser UI configuration during an analysis trial.
-- Start Session. The input hook begins before requesting OBS StartRecord, so
-  events during startup can have negative estimated video times. Status confirms
-  OBS active/unpaused in two successive status polls before reporting Recording.
-  Input capture continues throughout startup. Do a short input/audio check.
-- Use Sync Marker near the beginning and end. See synchronization below.
-- Stop Session. Wait for OBS acknowledgement and video copying. The OBS original
-  is retained. Generate Heatmaps and select the completed session folder.
-- On errors, read the dialog. If start or stop timed out, inspect OBS and retry Stop
-  before closing, or use **Check OBS** to confirm an uncertain start without sending
-  StartRecord again. Recording may still be active. Metadata and raw events are
-  flushed during capture; interrupted sessions may need manual video recovery
-  from OBS's recording folder. If copying fails, retry Stop with sufficient disk
-  space; the saved original output path is retained. Never start another recording
-  while recovering an uncertain session.
+## Normal session: six steps, all in the GUI
 
-## Files and synchronization
+1. **Select MapGen Chrome Window.** Windows refresh automatically on launch; use
+   Refresh after opening/closing windows. Titles help the operator choose; HWND,
+   process ID/start time and class establish identity. Do not reuse old handles.
+2. **Connect OBS.** Password entry is cleared after connection. Source validation
+   is completed with Auto-Calibrate; connection alone does not establish readiness.
+3. **Auto-Calibrate and Verify.** The app reads the UIA webpage Document rectangle
+   in physical screen pixels (not Chrome's whole client area). It reads OBS source
+   settings, source dimensions, item position/scale/crop/bounds/alignment, canvas and
+   output dimensions. Black margins are part of the computed recorded-frame mapping.
+   Inspect the green boundary preview. An ambiguous or unsupported setup blocks
+   calibration with a reason. **Verify Alignment** offers a separate calibration
+   board and explains the saved-video five-target measurement procedure.
+4. **Start Session.** Input capture begins before OBS start confirmation. Two
+   consecutive active/unpaused status samples are required; no duplicate StartRecord
+   is sent. An uncertain start keeps the log alive. Advanced → Check OBS retries
+   confirmation only. The optional countdown runs without freezing the GUI.
+5. **Stop Session.** OBS must acknowledge Stop and report settled inactivity; then a stable file is copied and decoded
+   to confirm saved video frames exist. Complete means the copied video was indexed;
+   it does not imply spatial, temporal or Zoom validation. Stop/copy failures preserve
+   original files. Do not start/stop/pause OBS externally during a session.
+6. **Review / Generate Analysis.** Select the session folder. View actual decoded
+   frames, play a muted frame preview or open the original video with audio, step
+   frames, set the participant analysis interval, label views/states, and measure QA.
+   Then export PNG/CSV/JSON. All long decoding/export jobs run in background workers.
 
-Each unique session folder contains:
+The participant need not interact with Recorder. Advanced provides optional
+**Ctrl+Alt+Shift+F9** start/stop and **Ctrl+Alt+Shift+F10** task-boundary shortcuts.
+They are disabled/unarmed by default, require explicit registration and arming,
+use OS conflict checks and suppress key repeats. Change function keys if needed;
+only deliberate triple-modifier combinations are accepted. OS conflict detection
+cannot guarantee compatibility with every application/Chrome extension binding.
+Disable shortcuts immediately if they conflict. No keyboard content is recorded.
 
-- `video.mkv` (or OBS's selected extension): copied after recording stops.
-- `events.jsonl`: monotonic nanoseconds, mouse type, physical X/Y, button/press,
-  scroll deltas, desktop/foreground/target geometry, per-event target observation,
-  content-local/normalized coordinates and classification/reason. All received
-  move/click/scroll callbacks are kept, including outside and uncertain events;
-  there is no target filter or movement throttle at capture. OS input may itself
-  be coalesced; these are callback timestamps, not hardware timestamps.
-- `metadata.json`: UTC creation time, mode, capture rectangle, OBS request/response
-  timestamps, target identity/content calibration, output path, state, counts and input errors.
-- `sync.json`: OBS duration samples, origin estimate, half request round-trip
-  times, marker times, startup status observations, and a manually measured correction.
-- `mapgen_move_<width>x<height>-dpi<N>.png` and
-  `mapgen_click_<width>x<height>-dpi<N>.png`: MapGen-only event counts, one pair
-  per content size/DPI. Axes are content-local physical pixels with top-left origin.
-  Clicks count presses, not releases; moves are event density, **not dwell time**.
-- `analysis.json`: included/excluded/uncertain counts for all mouse events and for
-  click presses separately, reasons, per-layout totals/files, and alignment status.
-- `frame_mapping.json`, `reference-*.png`, `mapgen_click_overlay.png`: optional
-  explicit frame calibration, copied reference frame, and annotated clicks. These
-  stay within the ignored session folder. No overlay is produced if uncalibrated.
+The optional Begin/End Participant Task marker is non-destructive. Alternatively
+set both bounds in Review after the test; setup/administrative events stay in the
+raw dataset and are distinguished in derived reports.
 
-Older sessions lacking target observations still generate the original desktop
-heatmaps; they cannot be retroactively classified as MapGen-only. A recorded
-foreground window or title alone is insufficient evidence.
+## Automatic calibration: what it does and does not establish
 
-## What inside/outside/uncertain means
+UI Automation accepts only an unambiguous, visible, enclosing Document contained
+inside the Chrome client rectangle. No fixed toolbar height or visual guess is
+used. HWND/process/class and API hit-testing still govern inside/outside attribution.
+A default 0.5-second monitor rechecks geometry/OBS; measurements older than 1.5s,
+changed client size/DPI/monitor or failed APIs make events uncertain until refreshed.
+A journal records calibration changes. Post-session analysis also marks the interval
+between changed observations uncertain, rather than trusting a transform across
+an undetected change between polls.
 
-`inside` means the selected handle/process/class identity matches, the target is
-visible, geometry is stable during observation, the point is in the calibrated
-content rectangle, and Windows hit-testing resolves to that window's root.
-Another app being foreground does not automatically exclude a hover over visible
-MapGen. A point outside content (including Chrome controls), another root at the
-point, or mouse capture by another window is `outside`. Failed APIs, a closed or
-replaced target, missing hit tests, changed page-title digest, changed window mode,
-or moving geometry during the query are `uncertain`. Z-order bounds are also
-checked: potentially covering transparent/irregular windows which hit-testing
-might ignore cause `uncertain`, rather than an assumed inside event.
+DPI and physical desktop coordinates (including negative monitor origins) are
+preserved. UIA zoom values are recorded **if the provider exposes TransformPattern2**.
+Otherwise zoom monitoring says unavailable: keep browser zoom fixed and mark zoom,
+pan, scroll, panels and responsive changes as separate visual states. Chrome does
+not always expose exact zoom through UIA. No hidden approximation is labeled exact.
 
-Each event saves its observation, query interval, policy version and reason.
-Analysis replays the classifier using metadata calibration and saved observations;
-it does not delete or rewrite raw logs. Only `inside` events enter MapGen heatmaps.
-The identity includes HWND, PID, process start time and window class, rather than
-relying on a title. Titles appear in the GUI only; their SHA-256 digest is saved
-as a conservative change detector.
+OBS does not expose a Window Capture HWND through v5: association requires a unique
+match from its configured window title/class/executable to the selected Windows
+identity, or a unique class/executable match if the title changed. Multiple matches
+are rejected. Saved-video QA is needed to prove the intended source was captured.
 
-Windows APIs identify windows, not browser URLs or DOM elements. Content calibration
-is the user's confirmation of the MapGen viewport. A different page with the same
-title, an in-window Chrome side panel, responsive UI changes, or browser zoom cannot
-be reliably detected by this OS-only MVP. Keep the selected tab/UI configuration
-fixed and validate using the four-click procedure below. Same-size layouts across
-workflow steps are spatially aggregated, not semantically aligned. Window geometry
-and hit-testing are observations after the hook callback, not an atomic historical
-OS dispatch record; query intervals are retained for auditing. No Windows or Zoom
-compatibility claim is based on simulated tests.
+The manual fallback displays a captured client-area image with guides. Draw the
+content rectangle and explicitly confirm it; it is invalidated on size, DPI, title
+or window-mode changes. It is not the default and is never called automatically
+accurate. Advanced can explicitly allow uncalibrated raw recording; attribution
+then stays uncertain and overlays are not fabricated.
 
-## Click overlay: explicit OBS/frame calibration
+An optional CDP approach was investigated: `Page.getLayoutMetrics` gives CSS viewport
+metrics, but securely associating a debugging target with the selected HWND and
+physical multi-monitor geometry is not guaranteed. Enabling a remote-debugging
+port can expose browser data. The app neither launches a debugging browser nor
+uses `Runtime.evaluate`, injects JavaScript, or modifies MapGen. Native UIA is the
+implemented default; unavailable/ambiguous providers remain a real limitation.
 
-1. Complete a controlled session, click **Generate Heatmaps**, and select its folder.
-   Read `analysis.json` for layouts and included/excluded/uncertain click counts.
-   Alignment initially says **unverified**, which is expected.
-2. Export a PNG at the original resolution from the session's OBS video using your
-   video player, or save a representative OBS output screenshot at the same
-   resolution. Use the same window layout, page state and OBS transform as the
-   clicks being checked. Do not use a rescaled image from a document or chat.
-3. Click **Align Frame**, select the session, enter the exact layout key listed
-   (e.g. `1280x720-dpi96`), and select that PNG.
-4. Enter the visible **source crop** in MapGen-local physical pixels:
-   `left,top,width,height`. Full uncropped content is `0,0,W,H` from `analysis.json`.
-   If OBS removed 100 pixels from the left, start source X at 100 and reduce width.
-   Chrome toolbar/window borders are already excluded from MapGen-local space.
-5. Measure and enter the corresponding content bounds **in the PNG** as
-   `left,top,width,height`. Exclude black bars and any surrounding Chrome toolbar.
-   This explicitly accounts for OBS source cropping, scaling and letterboxing;
-   nonuniform axis scaling is supported, rotation/perspective are not.
-6. Open `mapgen_click_overlay.png`. Red numbered rings must match the known click
-   locations. It preserves the exact reference image resolution. Only clicks in
-   the selected layout and visible source crop are plotted; cropped-click counts
-   are reported. Other layouts require their own frame calibration; align them
-   separately, retaining copies of prior validation outputs if needed.
-7. Calibration records are saved in `frame_mapping.json` and copied to the report.
-   The report says `calibrated_mapping_applied_visual_verification_required` until
-   you verify the image yourself; applying a transform is not proof of alignment.
-   If you cannot measure the mapping confidently, leave it unverified. Never infer
-   it from output size alone. Changes to OBS transforms mid-session need separate
-   sessions/analysis; this MVP cannot reconstruct those changes.
+## Review, independent verification and dynamic states
 
-## OBS startup fix and diagnostics
+The timeline is based on **actual saved-video presentation timestamps**, not
+`frame number / nominal FPS`. Frame selection works with variable frame rate and
+PTS gaps. Exact extraction decodes from the beginning and caches frames; long
+recordings can seek slowly. The in-app muted preview is for research review, not
+guaranteed real-time playback. Use Open original video for normal audio playback.
 
-The original code called `StartRecord`, immediately performed one `GetRecordStatus`,
-and raised "inactive or paused" if that snapshot was not active/unpaused. A successful
-start request is not reliable evidence that the next status snapshot has settled.
-The application was already capturing input and OBS had received the start request,
-which explains why Stop could still stop/save the recording after that exception.
-This single-snapshot failure path is reproduced by simulated delayed/inconsistent
-status responses. We do not have the failing laptop's OBS trace, so the exact
-OBS-side transition timing/version behavior remains to be measured there.
+- Set analysis start/end at the current frame. Unknown gaps remain Unknown.
+- Add/edit non-overlapping segments with arbitrary **view** and **visual-state**
+  labels, boundaries, reference time and a reviewed-stable checkbox. Repeated visits
+  are separate segments. No hard-coded MapGen state names are assumed.
+- Suggest visual transitions scans coarse grayscale differences and records browser
+  title-digest changes. Suggestions have no semantic labels and may be pan/zoom,
+  animations or loading. Correct them by editing segments. A false visual suggestion
+  can be explicitly marked reviewed/no spatial change in the segment dialog.
+- Static heatmaps require an explicitly stable state, one valid mapping and no
+  unresolved visual/scroll/zoom change or clipped/unmapped samples. Different views,
+  states and visits are never automatically combined. Unknown/changing states still
+  have per-click saved-frame context, without borrowing another view's screenshot.
+- Select a raw click to see its time, class, local coordinate, activation annotation
+  and corresponding saved frame. Numbered click context and cyan trajectories use
+  the actual frame/time and do not bridge missing/outside move samples.
 
-The fix sends StartRecord once, then polls for two consecutive active/unpaused
-responses with valid nondecreasing duration. Polling retries for 10 seconds at
-150 ms intervals; one in-flight socket request can additionally take up to the
-configured 10-second request timeout. Request/response times, flags, durations and
-request-error types go to `sync.json` → `startup_observations`. An uncertain start
-keeps the input hook/file open and blocks duplicate StartRecord. **Check OBS**
-retries confirmation only. **Stop Session** sends StopRecord without depending on
-one potentially stale inactive status, and keeps capturing if stop fails. After a
-stop acknowledgement, video copy can be retried without sending another StopRecord.
-If OBS was stopped externally or a stop response was lost, OBS may reject a retry;
-retain the session and recover the video manually rather than silently claim success.
+**Spatial verification:** record five known targets near all four viewport corners
+and center. Review each raw click, hide its predicted ring using Measure target
+position, and click the independent visible target center. The report stores the
+frame index/PTS, video SHA-256, mapping ID, predicted/observed pixels and Euclidean
+error and display-selection uncertainty. A preview too small to measure within the
+target cannot pass. Five distinct well-distributed actions under one mapping, maximum error
+**≤5 recorded pixels**, qualify as experimentally verified *for that measured
+mapping/trial*. Multiple mappings receive separate statuses; partial coverage stays partial. This is a practical 1080p registration target, not a universal
+precision guarantee; small UI targets may require tighter criteria. Inspect the
+raw frame, not a generated ring, to avoid circular validation. A computed or merely
+inspected mapping remains distinct from measured verification. Real MapGen trials
+are still required after a separate calibration-board trial.
 
-The shared clock is `time.perf_counter_ns()`. A status request brackets OBS's
-`outputDuration`; midpoint minus duration estimates recording zero. The lowest
-half-RTT sample is selected. This accounts for startup delay better than assuming
-StartRecord request time equals video zero. Half RTT measures transport uncertainty
-only: OBS scheduling, duration granularity, encoder/scene/audio latency and Tk
-rendering are additional unknowns. No frame-accurate guarantee is made.
+**Temporal verification:** identify a real visible action's first response frame
+for selected clicks near the beginning, middle and end. Use Mark visible action
+time. Reports compare actual PTS with the original OBS-duration estimate, calculate
+median offset, max error, estimated drift and onset uncertainty. At 30FPS the target
+is **≤66.7ms** (two frames); drift over the session must be ≤33.3ms (one frame).
+At least three distinct, widely separated references with middle coverage are
+required. Apply measured median offset only with explicit confirmation; original
+nanoseconds and sync data are retained. Drift is diagnostic and not automatically
+"corrected". Missing measurements mean **unverified**; frame-gap uncertainty exceeding the target also prevents a pass. See [clock domains and
+limitations](docs/ARCHITECTURE.md).
 
-To verify on the actual laptop:
+**Filtering QA:** Label expected click class for controlled actions. QA reports
+comparisons, false positives/negatives and uncertain outcomes. Earlier Windows
+observations supplied by the user (1,238 events, 1,022 inside, 216 outside, 7 included
+and 1 excluded presses at 1823×914 / 144 DPI) validate aspects of the earlier build;
+they do not validate this upgrade's new UIA, transform or measurement paths.
 
-1. Capture the sync popup in OBS (Display Capture, or temporarily arrange the OBS
-   scene to include it). A popup outside a Chrome Window Capture will not appear.
-2. Press Sync Marker several times at the start and end; optionally say its number
-   aloud to compare audio as well. Markers are logged before the popup is drawn.
-3. After stopping, run:
+## Files, metrics and data protection
 
-   ```powershell
-   .\.venv\Scripts\python.exe -m recorder.tools sessions\YOUR_SESSION
-   ```
+Original `video.*`, `events.jsonl`, `metadata.json` and `sync.json` remain. New
+`calibration_observations.jsonl` journals live geometry. `review.json` contains
+adjustable intervals, annotations and independent measurements; prior edits are
+archived in `review_history/`. `review_cache/` holds decoded frames and PTS index.
+`research_analysis/report.json`, `qa.json` and `events.csv` reference raw event IDs,
+line numbers, nanoseconds, derived video times, classes/reasons, view/state/segment,
+local and recorded-frame coordinates, mapping and frame provenance.
 
-   This prints marker video-time estimates and sample-origin spread and writes
-   `timeline.jsonl` with estimated video seconds, preserving raw events.
-4. Frame-step video in a player to find each visible popup onset. Compare actual
-   onset time with the report. Record offsets and variation; the popup's rendering
-   delay is included. A click visible in the captured application provides an
-   additional check closer to the mouse interaction. Enter **actual minus
-   estimated time in milliseconds** into the GUI's correction field for the current
-   session, Save correction, and rerun the report. For older sessions, edit only
-   `manual_correction_ms` in their `sync.json`. Compare multiple markers to detect
-   drift: a single offset cannot fix drift or pauses. Preserve measured residual
-   errors in a local session note. Audio synchronization must also be checked by
-   playback; it is governed by OBS's audio configuration.
+Each successful export has a new `research_analysis/run-<id>/` directory; the root
+report points to the current run, and previous derived outputs are retained.
+`analysis.json` links the new QA status while preserving any legacy alignment result.
+PNG outputs include per-segment raw/smoothed density, numbered clicks and per-click
+saved-frame context. Raw density grids are exported as CSV. The metric is **received
+mouse events per 128×128 recorded-frame bin**, not gaze, attention or stationary dwell.
+Palette intensity is normalized to each image's maximum; compare counts, not colors
+across images. Optional Gaussian smoothing is sigma=1 bin and count-preserving;
+raw counts always remain. Small click samples should use numbered clicks, not
+exaggerated smoothed hotspots. View dwell means annotated interval duration, not
+where the mouse rested. Movement path is a conservative sum over consecutive
+same-layout move callbacks; gaps/outside events are not bridged.
 
-## Zoom remote-control diagnostic (must validate on Windows)
+All global mouse callbacks, including outside/uncertain events and button releases,
+are retained. Complete press/release pairs and unmatched events are reported
+separately. A possible first activation click is annotated from prior observed
+focus, never discarded merely for lacking earlier foreground focus. Windows APIs
+sample state after callbacks; they cannot prove historical dispatch or distinguish
+all page popups/same-title tab changes. PTS gaps can reflect dropped frames or VFR;
+no automatic cause is inferred. OS-level input coalescing and hook/disk performance
+must also be checked on the actual laptop.
 
-Global hooks may capture Zoom-injected events, but this depends on Zoom version,
-Windows permissions and the remote-control path. Compatibility is **unverified**.
+Old sessions can be opened if their finalized video and time origin exist. Legacy
+manual `frame_mapping.json` is supported when dimensions match; without one, old
+inside/outside data is retained but frame overlay stays unavailable. Existing
+`python -m recorder.tools SESSION` and legacy heatmap APIs remain for compatibility;
+new research exports/QA, rather than layout-only aggregates, are the review workflow.
 
-1. First record a local baseline: move in a recognizable pattern, left/right click,
-   drag, and scroll both directions; observe increasing GUI counts and review video.
-2. Start a separate session labeled `zoom`. Share the intended screen/window and
-   grant a second person remote control. Keep the local mouse untouched.
-3. Ask them to repeat the same pattern, clicks, drag, and scrolls. Observe counts,
-   inspect JSONL event types/positions/press-release pairs, and compare with video.
-   The hook does not attribute events to a person; label controlled trials clearly.
-4. Check secondary monitors, negative coordinates, mixed DPI, foreground changes,
-   and any elevation mismatch. Avoid running tested applications elevated unless
-   necessary. If video shows movement but events are absent, the current Zoom/input
-   configuration is unsupported; do not use these logs for heatmap conclusions.
-5. Play back microphone and remote participant speech. Confirm sync markers at
-   both ends and document measured timing error before collecting real sessions.
+Keep sessions in ignored `sessions/` or an external private folder. Recordings,
+JSONL, media, credentials and `.env` are ignored. Raw titles are chooser labels only;
+recorded title digests are change signals. Do not commit personal screenshots,
+URLs, recordings, passwords or exported research data. Review `git status`.
 
-## Detailed Windows acceptance checklist
+## Tests, synthetic example and Windows evidence
 
-Run this first in person, with synthetic/nonpersonal content, then repeat through
-Zoom with a second person. The automated tests below do not replace this checklist.
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m examples.synthetic_demo
+```
 
-1. Update the checkout and dependencies in PowerShell:
+The synthetic demo creates a mock Home/Editor session and overlays under
+`sessions/synthetic-demo/`, using locally generated pictures and a synthetic MKV.
+[Example outputs](examples/README.md) are explicitly synthetic, not MapGen/Windows
+accuracy evidence. Saved-video integration tests exercise real FFmpeg decoding,
+PTS selection, frame pixels, per-state separation and raw-log preservation.
 
-   ```powershell
-   git pull --ff-only origin main
-   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-   .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-   .\.venv\Scripts\python.exe -m recorder
-   ```
-
-2. Open MapGen in Chrome and another application (e.g. Notepad). Choose the matching
-   Chrome window in OBS Window Capture. Refresh/select it in Recorder, pick content
-   corners, connect, and Start. Verify OBS starts **once**, Recorder shows Recording
-   after confirmation, and microphone/desktop audio meters behave as expected.
-3. Keep window geometry and OBS transform fixed. Click **three known safe locations**
-   inside MapGen once each; note their physical/content-local positions using
-   `events.jsonl` after the session. Choose distinct visible landmarks that will not
-   navigate or change the reference layout. Do not use browser controls.
-4. Switch to Notepad, place it over part of Chrome, and click several times in its
-   covered area. Also click outside Chrome. Return to MapGen and click **one more
-   known content location**. Avoid extra page clicks; use Alt+Tab to switch apps.
-5. Stop, then Generate Heatmaps. In `analysis.json`, `click_presses.included` must be
-   **4** for this controlled trial. Notepad/outside clicks are excluded; unsupported
-   or ambiguous observations are uncertain and must not enter the MapGen heatmap.
-   If included is not 4, inspect reasons and raw observations; do not accept the trial
-   or remove inconvenient raw events. Keep recorder controls off the MapGen viewport
-   to avoid confusing extra covered-area clicks with the four intended page clicks.
-6. Verify `events.jsonl` contains all four page clicks AND other-app clicks (and
-   their releases), all movement/scroll callbacks and original monotonic timestamps.
-   Every mouse event has `target` and `target_observation`; identity, content-local
-   coordinates and classification should match the trial. Query errors should produce
-   uncertain records, not disappear from raw data.
-7. Export an OBS frame from the matching layout, perform **Align Frame** as described
-   above, and verify exactly four rings land on the known interface landmarks.
-   Compare ring centers with measured landmarks in image pixels; write measured
-   residual X/Y error into a local note under the session folder. Repeat with a
-   known OBS crop, scale and letterbox; never accept a visually displaced overlay.
-8. In separate trials test moving the window, ordinary resizing, maximizing before
-   calibration, and minimizing/restoring. Move across monitors left/above primary
-   and across 100%/125%/150% DPI settings. Verify physical pixels/local origin and
-   per-size/DPI heatmaps. Switching normal/maximized mid-session should be uncertain;
-   stop, recalibrate in the new state and repeat. Check toolbar/content boundaries
-   within a pixel, especially after DPI changes; stop/recalibrate if Chrome's UI
-   no longer follows the calibrated insets.
-9. Cover the exact click point with another window while Chrome remains visible;
-   confirm those events are excluded. Try hovering over an uncovered MapGen area
-   while another app is foreground: it can still be inside. Test drag capture,
-   changed tabs, closed/reopened Chrome, minimized windows, Chrome menus and overlays.
-   Unavailable identity/hit tests, changed titles and ambiguous overlays must be
-   uncertain. OS-only classification cannot identify same-title tab changes; do
-   not use those trials to claim application-content attribution.
-10. Repeat start/stop at least five times, including a cold/heavier OBS scene. No
-    false failure should occur for an activation that settles within the deadline;
-    there must be one OBS recording per session. Inspect startup observations in
-    `sync.json`. On a genuine timeout, verify counts keep increasing, Start does
-    not issue another request, Check OBS can confirm a settled recording, and Stop
-    saves the video. Do not intentionally interrupt a real participant recording.
-11. Run the synchronization marker procedure above and audio playback checks at
-    both ends. Document measured timing error; frame accuracy is not guaranteed.
-12. Repeat the four-click and scroll/movement trials through Zoom remote control,
-    leaving the local mouse untouched. Document Windows/Zoom/OBS versions, DPI,
-    capture settings and observed counts. If events are absent or uncertain, report
-    that configuration unsupported rather than claiming Zoom compatibility.
-
-## Tests and limitations
-
-`python -m unittest discover -s tests -v` runs portable tests for startup-delay
-math, correction sign, negative monitor origins, half-open coordinate bounds,
-heatmap bin orientation, valid PNG output, session event persistence, simulated
-OBS stop/copy, failure recovery, delayed/inconsistent activation, duplicate-start
-protection, mocked Windows window enumeration, target identity/occlusion,
-movement/resize/DPI transforms, four-click raw-log preservation and frame overlay.
-Reference images used by tests are synthetic. They do not validate real OBS, Tk rendering,
-Windows input hooks, microphone/desktop audio or Zoom. Run the checklist above
-on Windows. No MapGen-specific events, custom media encoder, or automatic OBS
-scene/audio configuration are included.
-
-Recordings, JSONL, common media files, local credentials and `.env` are ignored.
-Keep sessions under `sessions/` or an external private folder; arbitrary personal
-files elsewhere are not automatically protected. Review `git status` before commits.
+See [Windows acceptance tests and evidence matrix](docs/VALIDATION.md) for the
+required inside/outside, five-target spatial, repeatability, temporal, dynamic-view,
+start/stop and Zoom procedures. Real Windows/OBS/UIA/DPI/Zoom measurements for this
+upgrade remain outstanding. No test in Linux can establish that compatibility.

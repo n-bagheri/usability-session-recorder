@@ -40,3 +40,11 @@ class ConfirmationTests(unittest.TestCase):
             with self.assertRaises(RecordingConfirmationTimeout):
                 wait_for_recording(lambda:status(False),history.append,timeout=1)
         self.assertEqual(len(history),2)
+
+    def test_stop_requires_settled_inactive_not_one_stale_status(self):
+        from recorder.obs import wait_for_stopped
+        responses=[status(False),status(True),status(False),status(False)]
+        history=[]
+        with patch('time.sleep'):
+            wait_for_stopped(lambda:responses.pop(0),history.append)
+        self.assertEqual(len(history),4)

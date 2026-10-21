@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from .core import estimate_origin
-from .obs import wait_for_recording
+from .obs import wait_for_recording, wait_for_stopped
 from .targeting import classify
 
 
@@ -22,11 +22,14 @@ class Session:
         self.listener = None
         self.stream = None
         self.active = False
+        self.sequence = 0
+        self.previous_foreground = None
         self.counts = {}
         self.target_counts = {"inside": 0, "outside": 0, "uncertain": 0}
         self.meta = {'schema_version': 2, 'target_calibration': target, 'mode': mode, 'capture_rect': rect,
                      'created_utc': datetime.now(timezone.utc).isoformat(),
-                     'clock': 'time.perf_counter_ns', 'state': 'preparing',
+                     'clock': 'time.perf_counter_ns',
+                     'clock_domains': {'input':'Python hook-callback perf_counter_ns, not hardware event time','obs':'outputDuration milliseconds, request midpoint estimate','video':'saved stream presentation timestamps relative first video PTS','accuracy':'unverified until measured against saved frames'}, 'state': 'preparing',
                      'geometry_at_start': geometry_provider(),
                      'coordinate_space': 'physical desktop pixels',
                      'move_sampling_hz': None, 'input_policy': 'All mouse callbacks retained; no target filtering at capture',
@@ -48,7 +51,8 @@ class Session:
         with self.lock:
             if not self.active:
                 return
-            event = {'type': kind, 'monotonic_ns': now, **extra}
+            self.sequence += 1
+            event = {'event_id': str(self.sequence), 'type': kind, 'monotonic_ns': now, **extra}
             if x is not None:
                 event.update(x=x, y=y)
             try:
@@ -65,7 +69,19 @@ class Session:
                         snapshot = {'error': str(exc)}
                 event['target_observation'] = snapshot
                 event['observation_interval_ns'] = [observed_before, time.perf_counter_ns()]
-                event['target'] = classify(x, y, self.target, snapshot)
+                try:
+                    event['target'] = classify(x, y, self.target, snapshot)
+                except Exception as exc:
+                    event['target'] = {'classification':'uncertain','reason':'classification_error','error':str(exc)}
+                if event['observation_interval_ns'][1]-now > 100_000_000:
+                    if snapshot is not None:snapshot['observation_delayed']=True
+                    event['target'].update(classification='uncertain',reason='geometry_observation_delayed_over_100ms')
+                current_foreground = (snapshot or {}).get('foreground_root')
+                if kind=='click' and extra.get('pressed') and self.target:
+                    event['activation'] = 'possible_activation_click' if self.previous_foreground not in (None,self.target['identity']['hwnd']) else 'not_identified'
+                    event['previous_observed_foreground'] = self.previous_foreground
+                    event['activation_note'] = 'Prior observed focus is not proof of OS dispatch; an inside activation click is retained'
+                self.previous_foreground = current_foreground
             try:
                 self.stream.write(json.dumps(event)+'\n')
                 self.stream.flush()
@@ -128,7 +144,7 @@ class Session:
                 on_click=lambda x,y,b,p:self.event('click',x,y,button=str(b),pressed=p),
                 on_scroll=lambda x,y,dx,dy:self.event('scroll',x,y,dx=dx,dy=dy))
             self.listener.start()
-            self.listener.wait()
+            wait_listener_ready(self.listener)
             self.meta['start_request_ns'] = time.perf_counter_ns()
             self.meta['owns_recording_attempt'] = True
             self.obs.start_record()
@@ -164,12 +180,20 @@ class Session:
                 self.sample()
             except Exception as exc:
                 self.meta['sync_warning'] = str(exc)
-        # Do not close input capture until OBS acknowledges stop. Caller can retry.
+        # One StopRecord, followed by settled inactive confirmation. A lost/late
+        # confirmation must not send a second stop against an already stopping output.
         if self.meta['state'] != 'stopped':
             try:
-                # Do not trust a single inactive status: it may be stale during startup.
-                result = self.obs.stop_record()
-                self.meta['obs_output_path'] = result.output_path
+                if not self.meta.get('stop_acknowledged'):
+                    self.meta['state']='stopping'
+                    result = self.obs.stop_record()
+                    self.meta['obs_output_path'] = result.output_path
+                    self.meta['stop_acknowledged']=True
+                    self.save()
+                def observe(data):
+                    self.sync.setdefault('stop_observations',[]).append(data)
+                    self.save()
+                wait_for_stopped(self.obs.get_record_status,observe)
             except Exception:
                 self.meta['state'] = 'stop_uncertain'
                 self.save()
@@ -189,14 +213,44 @@ class Session:
         source = self.meta.get('obs_output_path')
         if source:
             source = Path(source)
-            if not source.is_file():
-                raise RuntimeError(f'OBS video is not accessible: {source}. Copy it into {self.folder}')
+            wait_for_stable_file(source)
             destination = self.folder / ('video'+source.suffix)
             if not destination.exists():
                 partial = destination.with_suffix(destination.suffix+'.partial')
                 shutil.copy2(source, partial)
                 partial.replace(destination)
             self.meta['video_file'] = destination.name
+            self.meta['finalization'] = 'copied_pending_saved_video_decode_check'
         else:
             self.meta['video_warning'] = 'OBS was already stopped; recover video manually from OBS output folder'
         self.save()
+
+
+    def task_boundary(self, beginning=True):
+        self.event('analysis_boundary',boundary='begin' if beginning else 'end')
+        self.meta['analysis_'+('begin' if beginning else 'end')+'_ns']=time.perf_counter_ns()
+        self.save()
+
+
+def wait_listener_ready(listener,timeout=3):
+    ready=threading.Event();errors=[]
+    def wait():
+        try:listener.wait()
+        except Exception as exc:errors.append(exc)
+        finally:ready.set()
+    threading.Thread(target=wait,daemon=True).start()
+    if not ready.wait(timeout):raise RuntimeError('Windows mouse hook did not become ready before deadline; OBS was not started')
+    if errors:raise errors[0]
+
+
+def wait_for_stable_file(path,timeout=5):
+    deadline=time.monotonic()+timeout;previous=None;stable=0
+    while time.monotonic()<deadline:
+        try:
+            stat=path.stat();current=(stat.st_size,stat.st_mtime_ns)
+            stable=stable+1 if current==previous and stat.st_size>0 else 0
+            if stable>=2:return
+            previous=current
+        except FileNotFoundError:stable=0
+        time.sleep(.15)
+    raise RuntimeError(f'OBS video is missing, empty or still changing: {path}. Preserve original and retry copy.')

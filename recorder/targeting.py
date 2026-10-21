@@ -19,6 +19,10 @@ def contains(rect, x, y):
 
 
 def content_rect(calibration, snapshot):
+    if calibration.get('method') == 'automatic_uia_obs':
+        if snapshot.get('viewport_error') or not snapshot.get('viewport'):
+            raise ValueError('Fresh automatic viewport measurement required')
+        return snapshot['viewport']['rect']
     left, top, width, height = snapshot['client_rect']
     scale = snapshot['dpi'] / calibration['dpi']
     l, t, r, b = [round(v*scale) for v in calibration['insets']]
@@ -50,12 +54,14 @@ def classify(x, y, calibration, snapshot):
     if not same_identity(calibration['identity'], snapshot.get('identity', {})):
         result['reason'] = 'target_identity_changed'
         return result
+    if snapshot.get('observation_delayed'):
+        return dict(result,reason='geometry_observation_delayed_over_100ms')
     if not snapshot.get('stable'):
         result['reason'] = 'window_changed_during_observation'
         return result
     if not snapshot.get('visible') or snapshot.get('minimized') or snapshot.get('cloaked'):
         return dict(result, classification='outside', reason='target_not_visible')
-    if snapshot.get('maximized', False) != calibration.get('maximized', False):
+    if calibration.get('method') != 'automatic_uia_obs' and snapshot.get('maximized', False) != calibration.get('maximized', False):
         return dict(result, reason='window_mode_changed_recalibration_required')
     try:
         rect = content_rect(calibration, snapshot)
@@ -67,7 +73,7 @@ def classify(x, y, calibration, snapshot):
     result['normalized'] = [(x-rect[0])/rect[2], (y-rect[1])/rect[3]]
     if not contains(rect, x, y):
         return dict(result, classification='outside', reason='outside_content_rectangle')
-    if snapshot.get('title_digest') != calibration.get('title_digest'):
+    if calibration.get('method') != 'automatic_uia_obs' and snapshot.get('title_digest') != calibration.get('title_digest'):
         return dict(result, reason='page_title_changed_recalibration_required')
     # Missing hit-test or capture information is not evidence of an inside event.
     if not snapshot.get('hit_root') or snapshot.get('capture_root') is None:

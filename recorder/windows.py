@@ -171,7 +171,7 @@ def target_snapshot(hwnd, x, y):
             capture = int(user.GetAncestor(info.hwndCapture, 2) or 0) if info.hwndCapture else 0
         cloaked = _is_cloaked(hwnd)
         return {'identity': identity, 'client_rect': client, 'window_rect': _rect(user, hwnd),
-                'dpi': dpi, 'title_digest': title, 'hit_hwnd': int(hit or 0),
+                'dpi': dpi, 'title_digest': title, 'monitor': monitor_at(hwnd), 'frame_rect': extended_frame(hwnd), 'hit_hwnd': int(hit or 0),
                 'possible_occluders': _possible_occluders(user, hwnd, x, y),
                 'hit_root': int(hit_root or 0), 'capture_root': capture,
                 'foreground_root': int(user.GetAncestor(user.GetForegroundWindow(), 2) or 0),
@@ -181,3 +181,19 @@ def target_snapshot(hwnd, x, y):
                            and title == title_digest(_title(user, hwnd)) and dpi == user.GetDpiForWindow(hwnd))}
     except (OSError, RuntimeError) as exc:
         return {'error': str(exc)}
+
+
+def extended_frame(hwnd):
+    rect = wintypes.RECT()
+    fn = ctypes.windll.dwmapi.DwmGetWindowAttribute
+    fn.argtypes = [wintypes.HWND,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD]
+    if fn(hwnd,9,ctypes.byref(rect),ctypes.sizeof(rect)) != 0:
+        return None
+    return [rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top]
+
+
+def monitor_at(hwnd):
+    fn = ctypes.windll.user32.MonitorFromWindow
+    fn.argtypes = [wintypes.HWND,wintypes.DWORD]
+    fn.restype = wintypes.HANDLE
+    return int(fn(hwnd,2) or 0)
