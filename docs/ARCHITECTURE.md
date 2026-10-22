@@ -1,8 +1,8 @@
 # Measurement architecture and supported geometry
 
 The existing `Session` engine, OBS audio/video recording, raw filenames, monotonic
-clock and press/release capture are retained. The GUI was split into a Basic/Advanced
-controller and a post-session editor; the recording engine was not replaced.
+clock and press/release capture are retained. Recording, saved-session analysis and
+advanced diagnostics have separate workspaces; the recording engine was not replaced.
 
 | Module | Responsibility |
 |---|---|
@@ -13,7 +13,11 @@ controller and a post-session editor; the recording engine was not replaced.
 | `media.py` | Saved-video SHA-256, ffprobe PTS index and exact-index FFmpeg frame decoding |
 | `review.py`, `qa.py` | Non-destructive segments/task interval, click pairing, independent spatial and temporal evidence |
 | `research.py` | Contextual per-click images, stable-state overlays, view metrics, provenance CSV/JSON, nonsemantic visual suggestions |
-| `gui.py`, `review_ui.py`, `hotkeys.py` | Operator workflow, GUI review/playback/measurement, opt-in conflict-checked Windows shortcuts |
+| `annotations.py`, `regions.py` | Version-2 visual AOIs, view edits, explicit assignment/overlap rules and conservative interaction summaries |
+| `corrections.py` | View-, time- and geometry-scoped researcher registration; raw evidence retained |
+| `heatmaps.py` | Adjustable count/partial-time densities, transparent layers and numerical grids |
+| `gui.py`, `workspace_ui.py`, `ui_helpers.py` | Separate recording/analysis workflows, visual timeline/AOI editing and scrollable diagnostics |
+| `review_ui.py`, `hotkeys.py` | Reused async saved-video player/optional measurements and conflict-checked Windows shortcuts |
 
 ## Spatial coordinates
 
@@ -91,3 +95,6 @@ for checking the real application's viewport and content states.
 
 Each export writes to a new versioned analysis run. Only the root derived report/QA
 pointers are updated; raw recordings and earlier export runs are retained.
+
+See [analysis schema and rules](ANALYSIS.md) for version-1 compatibility, corrections,
+region metrics and export provenance. No additional runtime dependency is introduced.

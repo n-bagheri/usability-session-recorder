@@ -65,5 +65,7 @@ def spatial_report(measurements, frame_size, expected_fingerprint):
                   mapping_ids=sorted(ids),measurement_count=len(valid))
     result['status'] = ('experimentally_verified' if max(errors)<=5 else 'failed') if qualified else 'measured_insufficient_coverage'
     result['reference_selection_uncertainty_px']=max(m.get('reference_selection_uncertainty_px',0) for m in valid)
+    result['verification_scope']='operator-annotated trial with stated uncertainty; not a guaranteed device-accuracy bound'
+    if qualified and any(m.get('reference_selection_uncertainty_px',0)<=0 for m in valid):result['status']='uncertainty_not_documented'
     if qualified and result['reference_selection_uncertainty_px']>5:result['status']='insufficient_reference_resolution'
     return result

@@ -194,7 +194,7 @@ class ReviewWindow:
             x,y=event.x/self.frame_scale,event.y/self.frame_scale
             if not (0<=x<self.current['size'][0] and 0<=y<self.current['size'][1]):return
             m=self.data.measure_spatial(self.current_event['event_id'],self.current,[x,y])
-            m['reference_selection_uncertainty_px']=1/self.frame_scale
+            m['reference_selection_uncertainty_px']=max(2,1/self.frame_scale)
             if messagebox.askyesno('Independent target measurement',f'Observed error: {m["error_px"]:.2f} recorded pixels. Save this measurement?\nUse actual target landmarks, not painted overlay rings.',parent=self.root):
                 review=copy.deepcopy(self.data.review)
                 review['spatial_measurements']=[old for old in review['spatial_measurements'] if old['event_id']!=m['event_id']]+[m]

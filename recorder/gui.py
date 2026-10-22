@@ -18,17 +18,19 @@ from .session import Session
 from .media import Video
 from .review import load_review,write_review
 from .qa import event_seconds
-from .review_ui import ReviewWindow
+from .workspace_ui import AnalysisWorkspace
+from .ui_helpers import details,scroll_page
 from .hotkeys import GlobalShortcuts
 
 
 class RecorderUI:
     def __init__(self,root):
-        self.root=root;root.title('Usability Session Recorder');root.geometry('870x680')
-        self.obs=None;self.session=None;self.monitor=None;self.calibration=None;self.targets=[]
+        self.root=root;root.title('Usability Session Recorder');root.geometry(f'{min(870,root.winfo_screenwidth()-60)}x{min(680,root.winfo_screenheight()-100)}')
+        root.minsize(600,440)
+        self.obs=None;self.session=None;self.monitor=None;self.calibration=None;self.targets=[];self.mouse_ready=False;self.work_error=None
         self.busy=False;self.jobs=queue.Queue();self.shortcuts=None;self.buttons=[]
         self.status=tk.StringVar(value='Not ready — select the MapGen Chrome window.')
-        self.readiness=tk.StringVar(value='OBS disconnected | calibration unavailable | spatial/timing UNVERIFIED')
+        self.readiness=tk.StringVar(value='Select Chrome, then check the recording setup.')
         self.password=tk.StringVar(value=os.environ.get('OBS_WEBSOCKET_PASSWORD',''))
         self.port=tk.StringVar(value='4455');self.output=tk.StringVar(value=str(Path('sessions').resolve()))
         self.mode=tk.StringVar(value='in-person');self.hotkey=tk.StringVar(value='Ctrl+Alt+Shift+F9')
@@ -36,29 +38,34 @@ class RecorderUI:
         self.countdown=tk.StringVar(value='0');self.allow_unverified=tk.BooleanVar(value=False)
         self.diagnostics=tk.StringVar(value='No recording. Raw global input is always retained.')
         tabs=ttk.Notebook(root);tabs.pack(fill='both',expand=True,padx=12,pady=12)
-        basic=ttk.Frame(tabs,padding=12);advanced=ttk.Frame(tabs,padding=12)
-        tabs.add(basic,text='Basic session workflow');tabs.add(advanced,text='Advanced / diagnostics')
-        ttk.Label(basic,textvariable=self.readiness,wraplength=800).pack(fill='x',pady=10)
-        ttk.Label(basic,text='1. Select MapGen Chrome Window').pack(anchor='w')
+        basic_outer,basic=scroll_page(tabs);advanced_outer,advanced=scroll_page(tabs);analysis=ttk.Frame(tabs,padding=16)
+        tabs.add(basic_outer,text='Record a session');tabs.add(analysis,text='Analyze a recording');tabs.add(advanced_outer,text='Advanced / Diagnostics')
+        ttk.Label(basic,text='Select MapGen → Record → Stop → Open Analysis',font=('Segoe UI',14)).pack(anchor='w',pady=10)
+        ttk.Label(basic,textvariable=self.readiness,wraplength=740).pack(fill='x',pady=8)
+        ttk.Label(basic,text='MapGen Chrome window').pack(anchor='w')
         row=ttk.Frame(basic);row.pack(fill='x')
         self.target=ttk.Combobox(row,state='readonly');self.target.pack(side='left',fill='x',expand=True)
         self.target.bind('<<ComboboxSelected>>',lambda _:self.invalidate())
-        self.button(row,'Refresh windows',self.refresh).pack(side='left')
-        ttk.Label(basic,text='2. Connect and validate OBS').pack(anchor='w',pady=(12,0))
-        row=ttk.Frame(basic);row.pack(fill='x')
-        ttk.Label(row,text='OBS password:').pack(side='left');ttk.Entry(row,textvariable=self.password,show='*',width=30).pack(side='left')
-        self.button(row,'Connect OBS',self.connect).pack(side='left',padx=8)
-        ttk.Label(basic,text='3. Auto-Calibrate and Verify (webpage viewport + OBS saved-frame mapping)').pack(anchor='w',pady=(12,0))
-        row=ttk.Frame(basic);row.pack(fill='x')
-        for label,command in [('Auto-Calibrate',self.auto_calibrate),('Preview boundary',self.preview),('Verify Alignment…',self.verify)]:
-            self.button(row,label,command).pack(side='left',padx=3)
-        row=ttk.Frame(basic);row.pack(fill='x',pady=18)
-        for label,command in [('4. Start Session',self.start),('5. Stop Session',self.stop),('6. Review / Generate Analysis',self.review)]:
+        self.button(row,'Refresh',self.refresh).pack(side='left')
+        row=ttk.Frame(basic);row.pack(fill='x',pady=10)
+        ttk.Label(row,text='OBS password').pack(side='left');ttk.Entry(row,textvariable=self.password,show='*',width=24).pack(side='left',padx=8)
+        self.button(row,'Check recording setup',self.prepare).pack(side='left')
+        self.button(basic,'Mark webpage area if needed…',self.manual).pack(anchor='w')
+        row=ttk.Frame(basic);row.pack(fill='x',pady=20)
+        for label,command in [('Start Recording',self.start),('Stop Recording',self.stop),('Open Session',self.open_session)]:
             self.button(row,label,command).pack(side='left',padx=4)
-        self.button(basic,'Begin / End Participant Task (optional)',self.task_boundary).pack(anchor='w')
-        ttk.Label(basic,text='Task intervals can also be set after recording. The participant does not need to use this interface.',wraplength=790).pack(anchor='w',pady=6)
-        ttk.Label(basic,textvariable=self.status,wraplength=800).pack(fill='x',pady=12)
-        ttk.Label(basic,textvariable=self.diagnostics,wraplength=800).pack(fill='x')
+        self.button(basic,'Show saved files',self.open_folder).pack(anchor='w')
+        ttk.Label(basic,textvariable=self.status,wraplength=740).pack(fill='x',pady=10)
+        ttk.Label(basic,text='Video and all mouse evidence are saved first. Define views, label interface regions and generate heatmaps afterward.',wraplength=740).pack(fill='x')
+        ttk.Label(analysis,text='Analyze saved evidence — no OBS connection or participant needed',font=('Segoe UI',13)).pack(anchor='w',pady=10)
+        self.button(analysis,'Open recorded session…',self.review).pack(anchor='w',pady=8)
+        ttk.Label(analysis,text='Open recording → Define views → Label regions → Analyze interactions → Export images and reports.\nOriginal recordings and mouse logs remain unchanged.',wraplength=740).pack(anchor='w')
+        ttk.Label(advanced,textvariable=self.diagnostics,wraplength=740).pack(fill='x')
+        self.button(advanced,'Connect OBS only',self.connect).pack(anchor='w')
+        self.button(advanced,'Automatic page detection',self.auto_calibrate).pack(anchor='w')
+        self.button(advanced,'Preview page boundary',self.preview).pack(anchor='w')
+        self.button(advanced,'Optional alignment verification',self.verify).pack(anchor='w')
+        self.button(advanced,'Begin / End Participant Task',self.task_boundary).pack(anchor='w')
         self.entry(advanced,'Private sessions folder',self.output)
         self.entry(advanced,'OBS WebSocket port (localhost only)',self.port)
         ttk.Combobox(advanced,textvariable=self.mode,values=['in-person','zoom'],state='readonly').pack(anchor='w')
@@ -85,9 +92,9 @@ class RecorderUI:
     def entry(self,parent,label,variable):
         ttk.Label(parent,text=label).pack(anchor='w');ttk.Entry(parent,textvariable=variable,width=65).pack(fill='x',pady=(0,6))
 
-    def work(self,action,done=None):
+    def work(self,action,done=None,on_error=None):
         if self.busy:return
-        self.busy=True
+        self.busy=True;self.work_error=on_error
         for b in self.buttons:b.configure(state='disabled')
         self.target.configure(state='disabled')
         def run():
@@ -109,8 +116,11 @@ class RecorderUI:
                 self.target.configure(state='disabled' if self.session and self.session.active else 'readonly')
                 if error:
                     self.root.deiconify()
-                    self.status.set(('Error / recording state uncertain; raw capture continues. Use Check OBS or Stop. ' if self.session and self.session.active else 'Not ready / error. ')+str(error))
-                    messagebox.showerror('Recorder',str(error),parent=self.root)
+                    handler=self.work_error;self.work_error=None
+                    if handler:handler(error)
+                    else:
+                        self.status.set(('Recording state uncertain; evidence capture continues. Retry Stop or see Advanced. ' if self.session and self.session.active else 'Needs attention. ')+str(error))
+                        messagebox.showerror('Recorder',str(error),parent=self.root)
                 elif done:done(result)
         except queue.Empty:pass
         self.root.after(100,self.drain)
@@ -123,7 +133,7 @@ class RecorderUI:
     def invalidate(self):
         if self.monitor:self.monitor.stop()
         self.monitor=None;self.calibration=None
-        self.readiness.set('OBS '+('connected' if self.obs else 'disconnected')+' | auto-calibration needed | spatial/timing UNVERIFIED')
+        self.readiness.set('Check recording setup for the selected Chrome window.')
 
     def refresh(self):
         if self.busy or self.session and self.session.active:return
@@ -149,21 +159,44 @@ class RecorderUI:
         if self.monitor:self.monitor.stop()
         return CalibrationMonitor(self.obs,self.selected(),target_snapshot,viewport_reader,chrome_windows)
 
+    def prepare(self):
+        if self.busy or self.session and self.session.active:return
+        try:selected=self.selected();port=int(self.port.get())
+        except ValueError as exc:messagebox.showinfo('Recording setup',str(exc));return
+        secret=self.password.get();self.status.set('Checking OBS and mouse capture…')
+        def action():
+            obs=self.obs or SerializedOBS(connect(secret,port))
+            from pynput import mouse
+            from .session import wait_listener_ready
+            listener=mouse.Listener()
+            try:listener.start();wait_listener_ready(listener)
+            finally:listener.stop();listener.join(timeout=3)
+            return obs
+        def ready(obs):
+            self.obs=obs;self.password.set('');self.mouse_ready=True;self.auto_calibrate()
+        self.work(action,ready)
+
     def auto_calibrate(self):
         if self.session and self.session.active:return
         try:monitor=self.new_monitor()
         except Exception as exc:messagebox.showerror('Calibration',str(exc));return
-        self.status.set('Measuring webpage Document via Windows UIA and reading real OBS source/scene/output settings…')
+        self.monitor=monitor
+        self.status.set('Finding the webpage area and checking the OBS capture…')
         def action():
             c=monitor.calibration()
             # Capture a nonpersistent preview while the source is unchanged.
             return c
         def done(calibration):
             self.monitor=monitor;self.calibration=calibration;monitor.start()
-            self.status.set('Calibration computed. Inspect boundary; use a recorded QA trial to measure real spatial/timing errors.')
-            self.readiness.set(f'OBS source: {calibration["capture_mapping"]["source_name"]} | webpage {calibration["reference_size"]} physical px | computed, NOT experimentally verified')
+            self.status.set('Page area detected. Confirm the boundary before recording; optional precision checks are in Advanced.')
+            self.readiness.set('Ready — video source matched; page area detected. Alignment review recommended.')
             self.preview()
-        self.work(action,done)
+        def failed(error):
+            monitor.interval=2;monitor.start()
+            self.calibration=None;self.readiness.set('Needs confirmation — mark the webpage area, or preserve raw recording for later alignment.')
+            self.status.set('Automatic page detection could not be confirmed. Details are available in Advanced.')
+            if messagebox.askyesno('Confirm the webpage area','Recorder could not reliably find which part of Chrome contains MapGen. Mark it on a screenshot now?',parent=self.root):self.manual()
+        self.work(action,done,failed)
 
     def preview(self):
         if not self.calibration or self.busy:return
@@ -180,7 +213,7 @@ class RecorderUI:
 
     def image_window(self,image,title):
         window=tk.Toplevel(self.root);window.title(title)
-        scale=min(1100/image.width,650/image.height,1)
+        scale=min((window.winfo_screenwidth()-120)/image.width,(window.winfo_screenheight()-200)/image.height,1)
         display=image.resize((int(image.width*scale),int(image.height*scale)))
         photo=ImageTk.PhotoImage(display);label=ttk.Label(window,image=photo);label.image=photo;label.pack()
         ttk.Label(window,text='This desktop preview is NOT evidence of saved-video alignment. Measure independent targets after recording.',wraplength=1000).pack()
@@ -212,8 +245,8 @@ class RecorderUI:
                     raise ValueError('Manual screenshot must show the unchanged selected Chrome window unobscured. Move covering windows and retry.')
             return ImageGrab.grab(bbox=(c[0],c[1],c[0]+c[2],c[1]+c[3]),all_screens=True)
         def done(image):
-            self.root.deiconify();window=tk.Toplevel(self.root);window.title('MANUAL FALLBACK — draw content boundary and explicitly confirm')
-            scale=min(1100/image.width,650/image.height,1);photo=ImageTk.PhotoImage(image.resize((int(image.width*scale),int(image.height*scale))))
+            self.root.deiconify();window=tk.Toplevel(self.root);window.title('Which part of Chrome contains MapGen?')
+            scale=min((window.winfo_screenwidth()-120)/image.width,(window.winfo_screenheight()-200)/image.height,1);photo=ImageTk.PhotoImage(image.resize((int(image.width*scale),int(image.height*scale))))
             canvas=tk.Canvas(window,width=photo.width(),height=photo.height());canvas.pack();canvas.create_image(0,0,image=photo,anchor='nw');canvas.photo=photo
             points=[];text=tk.StringVar(value='Click top-left, then bottom-right page-content pixel in this image. Exclude all browser controls.')
             ttk.Label(window,textvariable=text,wraplength=1000).pack()
@@ -240,10 +273,10 @@ class RecorderUI:
                     monitor=self.new_monitor(reader)
                     def accepted(value):
                         self.monitor=monitor;self.calibration=value;monitor.start()
-                        self.readiness.set('MANUAL fallback computed — not experimentally verified. Record and measure five-target QA trial.')
+                        self.readiness.set('Ready — webpage area confirmed by researcher. Alignment review recommended.')
                     self.work(monitor.calibration,accepted);window.destroy()
                 except Exception as exc:messagebox.showerror('Fallback',str(exc),parent=window)
-            ttk.Button(window,text='I confirm the visual boundary (unverified fallback)',command=confirm).pack()
+            ttk.Button(window,text='Use this webpage area (alignment review recommended)',command=confirm).pack()
         self.work(grab,done)
 
     def start(self):
@@ -251,9 +284,9 @@ class RecorderUI:
         try:
             if not self.obs:raise ValueError('Connect OBS first')
             selected=self.selected();calibration=copy.deepcopy(self.calibration)
-            if not calibration and not self.allow_unverified.get():raise ValueError('Auto-calibrate first, or explicitly allow unverified raw recording in Advanced')
-            if calibration and (not self.monitor or (self.monitor.latest or {}).get('status')!='computed'):
-                raise ValueError('Calibration is stale/invalid. Recalibrate before recording.')
+            if calibration and (not self.monitor or (self.monitor.latest or {}).get('status')!='computed'):calibration=None
+            if calibration is None and not self.allow_unverified.get():
+                if not messagebox.askyesno('Record first, align later?', 'The webpage alignment is not confirmed. Save video and all mouse evidence now, then reconstruct alignment during analysis? Check OBS preview shows the intended Chrome window. Region metrics will remain uncertain until corrected.',parent=self.root):return
             seconds=int(self.countdown.get())
             if not 0<=seconds<=10:raise ValueError('Countdown must be 0–10 seconds')
             if calibration is None:
@@ -290,7 +323,8 @@ class RecorderUI:
             write_review(session.folder,review,video.info['duration'])
             return video
         def done(video):
-            self.status.set(f'Complete — finalized video: {len(video.pts)} frames; mouse {session.counts}; filtering {session.target_counts}. Spatial/timing: UNVERIFIED until measured; segmentation: review required.')
+            self.status.set(f'Recording saved: {session.folder}. Choose Open Session to define views, label regions and analyze interactions.')
+            self.readiness.set('Saved — original video and mouse evidence retained. Analysis and quality review are separate.')
         self.work(action,done)
 
     def task_boundary(self):
@@ -306,10 +340,18 @@ class RecorderUI:
     def review(self):
         if self.session and self.session.active:return
         folder=filedialog.askdirectory(title='Select completed session folder',initialdir=str(self.session.folder if self.session else self.output.get()))
-        if folder:ReviewWindow(self.root,folder)
+        if folder:AnalysisWorkspace(self.root,folder)
+
+    def open_session(self):
+        if self.session and not self.session.active:AnalysisWorkspace(self.root,self.session.folder)
+        else:self.review()
+
+    def open_folder(self):
+        path=self.session.folder if self.session else Path(self.output.get())
+        if path.exists() and os.name=='nt':os.startfile(path)
 
     def details(self):
-        messagebox.showinfo('Calibration evidence',json.dumps(self.monitor.latest if self.monitor else {'status':'unavailable'},indent=2)[:9000])
+        details(self.root,'Recording setup details',self.monitor.latest if self.monitor else {'status':'unavailable'})
 
     def enable_hotkeys(self):
         self.armed.set(False)
@@ -333,9 +375,9 @@ class RecorderUI:
                                  (' | WRITE ERROR '+self.session.meta['input_error'] if self.session.meta.get('input_error') else ''))
         if self.monitor and self.monitor.latest and self.monitor.latest['status']=='computed':
             v=self.monitor.latest['viewport']
-            self.readiness.set(f'OBS {self.monitor.latest["mapping"]["source_name"]} | viewport {v["rect"][2:]} physical px | computed, NOT experimentally verified | zoom: {v.get("zoom_monitoring","unknown")}')
+            self.readiness.set('Recording' if self.session and self.session.active else 'Ready — page area available. Alignment review recommended.' if self.mouse_ready else 'Page area available — Check recording setup to confirm mouse capture.')
         if self.monitor and self.monitor.latest and self.monitor.latest['status']=='invalid':
-            self.readiness.set('Calibration INVALID: '+self.monitor.latest['reason']+' — raw input remains available; attribution/overlays uncertain')
+            self.readiness.set('Review recommended — page alignment needs attention. Raw recording remains available.')
         self.root.after(500,self.poll)
 
     def close(self):

@@ -14,14 +14,18 @@ def save_json(path,data):
 
 
 def load_review(folder,duration):
-    path = Path(folder)/'review.json'
+    path=Path(folder)/'review.json'
+    defaults={'version':2,'analysis_interval':[0,duration],'segments':[],
+              'spatial_measurements':[],'temporal_measurements':[],
+              'visually_inspected_mapping_ids':[],'time_correction':{},'classification_labels':[],
+              'validation_environment':'unverified','aois':[],'aoi_overlap_policy':'ambiguous','mapping_corrections':[],
+              'heatmap_settings':{'opacity':.55,'intensity':1.0,'smoothing_sigma_bins':0.0},
+              'note':'Views, regions and corrections are researcher annotations; original recordings remain unchanged'}
     if path.exists():
-        return json.loads(path.read_text(encoding='utf-8'))
-    return {'version':1,'analysis_interval':[0,duration],'segments':[],
-            'spatial_measurements':[],'temporal_measurements':[],
-            'visually_inspected_mapping_ids':[],'time_correction':{},'classification_labels':[],
-            'validation_environment':'unverified',
-            'note':'Unknown gaps stay unclassified; view/state labels are researcher annotations, not automatic semantics'}
+        existing=json.loads(path.read_text(encoding='utf-8'))
+        defaults.update(existing)
+        defaults['version']=2
+    return defaults
 
 
 def validate_review(review,duration):
@@ -44,6 +48,8 @@ def validate_review(review,duration):
 
 def write_review(folder,review,duration):
     validate_review(review,duration)
+    from .annotations import validate_annotations
+    validate_annotations(review,duration)
     path = Path(folder)/'review.json'
     if path.exists():
         history = Path(folder)/'review_history'

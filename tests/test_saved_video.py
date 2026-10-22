@@ -34,6 +34,8 @@ class SavedVideoTests(unittest.TestCase):
             second=data.export();self.assertEqual(digest(),before)
             self.assertNotEqual(second['output_base'],report['output_base'])
             self.assertTrue((folder/'research_analysis'/report['output_base']/'report.json').exists())
+            self.assertTrue((folder/'research_analysis'/second['output_base']/'segment-home-original.png').exists())
+            self.assertTrue((folder/'research_analysis'/second['output_base']/'segment-home-click-density-transparent.png').exists())
             suggestions=suggest_transitions(data.video,step=1,threshold=.01)
             self.assertTrue(suggestions['suggestions'])
             self.assertTrue(all(s['semantic_label'] is None for s in suggestions['suggestions']))
@@ -55,7 +57,7 @@ class SavedVideoTests(unittest.TestCase):
             from recorder.media import run,Video
             from recorder.review import save_json
             run(['ffmpeg','-y','-v','error','-i',str(folder/'video.mkv'),'-vf','select=not(eq(n\\,5))',
-                 '-vsync','vfr','-c:v','ffv1',str(folder/'gap.mkv')])
+                 '-fps_mode','vfr','-c:v','ffv1',str(folder/'gap.mkv')])
             metadata=data.meta.copy();metadata['video_file']='gap.mkv';save_json(folder/'metadata.json',metadata)
             gap=Video(folder)
             self.assertGreater(gap.info['large_frame_gaps'],0)

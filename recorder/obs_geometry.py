@@ -174,3 +174,24 @@ def read_obs_capture(obs, selected, windows, snapshot, viewport):
                   obs_fps=[getattr(video,'fps_numerator',None),getattr(video,'fps_denominator',None)])
     result['id'] = fingerprint(result)
     return result
+
+
+def read_obs_evidence(obs,selected,windows):
+    """Raw capture facts even when webpage detection/transform support fails."""
+    scene=obs.get_current_program_scene().current_program_scene_name
+    items=obs.get_scene_item_list(scene).scene_items
+    sources=[]
+    for item in items:
+        try:data=obs.get_input_settings(item['sourceName'])
+        except Exception:continue
+        if data.input_kind!='window_capture':continue
+        entry={'source_name':item['sourceName'],'scene_item':item,'input_settings':data.input_settings}
+        try:entry['association']=associate(data.input_settings,selected,windows)
+        except ValueError as exc:entry['association_error']=str(exc)
+        try:entry['scene_transform']=obs.get_scene_item_transform(scene,item['sceneItemId']).scene_item_transform
+        except Exception as exc:entry['transform_error']=str(exc)
+        sources.append(entry)
+    video=obs.get_video_settings()
+    return {'method':'raw_OBS_settings_not_a_webpage_calibration','scene':scene,'window_capture_sources':sources,
+            'video_settings':{k:getattr(video,k,None) for k in ('base_width','base_height','output_width','output_height','fps_numerator','fps_denominator')},
+            'selected_identity':selected['identity']}

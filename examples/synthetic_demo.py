@@ -53,6 +53,12 @@ def create(folder):
     data=ResearchSession(folder)
     data.review['segments']=[{'id':'home','view':'Home','state':'stable home','start':0,'end':2,'stable':True,'reference_seconds':.4},
                              {'id':'editor','view':'Editor','state':'stable editor','start':2,'end':4,'stable':True,'reference_seconds':2.4}]
+    data.review['aois']=[];data.review['mapping_corrections']=[]
+    from recorder.annotations import new_aoi
+    for segment,label,rect in ((data.review['segments'][0],'Navigation (synthetic)',[55,85,70,165]),
+                               (data.review['segments'][0],'Gallery (synthetic)',[145,100,185,130]),
+                               (data.review['segments'][1],'Editor area (synthetic)',[110,90,230,165])):
+        data.review['aois'].append(new_aoi(segment,label,rect,data.video.frame(segment['reference_seconds']),True))
     write_review(folder,data.review,4)
     report=data.export(smoothed=True)
     shutil.rmtree(frames)

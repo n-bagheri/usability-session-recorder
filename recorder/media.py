@@ -22,19 +22,22 @@ class Video:
         self.folder = Path(folder)
         meta = json.loads((self.folder/'metadata.json').read_text(encoding='utf-8'))
         filename = meta.get('video_file')
+        self.filename_derivation='metadata.video_file'
+        if not filename:
+            candidates=[p.name for p in self.folder.glob('video.*') if p.suffix.lower() in ('.mkv','.mp4','.mov','.avi') and p.is_file()]
+            if len(candidates)==1:filename=candidates[0];self.filename_derivation='unique_legacy_session_video'
         if not filename or Path(filename).name != filename:
-            raise ValueError('No finalized session video_file in metadata. Recover the OBS video first.')
+            raise ValueError('No unique session video is available. Recover the OBS video before opening analysis.')
         self.path = self.folder/filename
         stat = self.path.stat()
         self.signature = {'file':filename,'size':stat.st_size,'mtime_ns':stat.st_mtime_ns}
         self.cache = self.folder/'review_cache'
         self.cache.mkdir(exist_ok=True)
         cached = self.cache/'video_index.json'
-        if cached.exists():
-            info = json.loads(cached.read_text())
-        else:
-            info = {}
-        if info.get('signature') != self.signature:
+        try:info=json.loads(cached.read_text()) if cached.exists() else {}
+        except (OSError,json.JSONDecodeError):info={}
+        if not isinstance(info,dict):info={}
+        if info.get('signature') != self.signature or not all(k in info for k in ('pts','size','fps','duration')):
             data = json.loads(run(['ffprobe','-v','error','-select_streams','v:0','-show_entries',
                 'stream=width,height,avg_frame_rate:frame=best_effort_timestamp_time,pkt_duration_time:format=duration',
                 '-show_frames','-of','json',str(self.path)]))
@@ -51,10 +54,11 @@ class Video:
                     'duration':max(float(data.get('format',{}).get('duration',0)),pts[-1]+1/fps),
                     'large_frame_gaps':sum(b-a > 1.5/fps for a,b in zip(pts,pts[1:])),
                     'gap_warning':'PTS gaps can be dropped frames or variable frame rate; no cause inferred'}
-            cached.write_text(json.dumps(info),encoding='utf-8')
+            temp=cached.with_suffix('.tmp');temp.write_text(json.dumps(info),encoding='utf-8');temp.replace(cached)
         if 'sha256' not in info:
             with self.path.open('rb') as video_file:info['sha256']=hashlib.file_digest(video_file,'sha256').hexdigest()
-            cached.write_text(json.dumps(info),encoding='utf-8')
+            temp=cached.with_suffix('.tmp');temp.write_text(json.dumps(info),encoding='utf-8');temp.replace(cached)
+        info['filename_derivation']=self.filename_derivation
         self.info = info
         self.pts = info['pts']
         self.fingerprint = info['sha256']
@@ -66,17 +70,28 @@ class Video:
             i -= 1
         return i
 
+    def interval_index(self,seconds,start,end):
+        """Choose an actual reference PTS inside a half-open view, even at cut boundaries."""
+        first=bisect.bisect_left(self.pts,start);last=bisect.bisect_left(self.pts,end)-1
+        if first>last:raise ValueError('This view contains no saved video frame. Extend its boundaries or choose another view.')
+        return min(max(self.nearest(seconds),first),last)
+
     def frame(self, seconds):
         """Exact decoded frame index from actual PTS; cache never uses nominal FPS as a clock."""
         index = self.nearest(seconds)
         path = self.cache/f'{self.fingerprint}-{index:08d}.png'
+        if path.exists():
+            from PIL import Image
+            try:
+                with Image.open(path) as cached_image:cached_image.verify()
+            except (OSError,ValueError,SyntaxError):path.unlink()  # Regenerable cache only, never raw video.
         if not path.exists():
             # Select exact n, decoding from the beginning. Slower than approximate seek,
             # but deterministic for VFR, B-frames and missing frames. All work runs off Tk.
             image = run(['ffmpeg','-v','error','-i',str(self.path),'-vf',f'select=eq(n\\,{index})',
-                         '-vsync','0','-frames:v','1','-f','image2pipe','-vcodec','png','pipe:1'])
+                         '-frames:v','1','-f','image2pipe','-vcodec','png','pipe:1'])
             if not image:
                 raise ValueError('Could not decode selected saved-video frame')
-            path.write_bytes(image)
+            temp=path.with_suffix('.tmp');temp.write_bytes(image);temp.replace(path)
         return {'path':str(path),'index':index,'seconds':self.pts[index],
                 'video_fingerprint':self.fingerprint,'size':self.info['size']}

@@ -14,6 +14,25 @@ The user's earlier recording/counts are baseline evidence only.
 | Reliability | Existing lifecycle/failure tests; saved-file decoding | Unverified: three consecutive real recording cycles and hook performance |
 | Zoom/audio | Existing OBS audio configuration preserved | Unverified: actual remote participant capture/attribution/playback |
 
+## Cloud checks for this revision
+
+Linux, Python 3.12.14, FFmpeg/ffprobe 7.1.5: **76 automated tests passed**,
+including real saved-video decoding, PTS cut boundaries, 84px-strip rejection,
+AOI scope/overlap/zoom rules, region exports, correction/reopen/undo, unchanged raw
+SHA-256 checks and recovery of corrupt derived caches. The synthetic example was
+regenerated and its region image inspected; Navigation/Gallery/Editor receive
+1/1/2 presses. Compilation and `git diff --check` passed. No GUI display was available
+in the cloud, so Tk interactions and display scaling were not exercised.
+
+Commands from repository root:
+
+```sh
+MPLCONFIGDIR=/tmp/recorder-matplotlib .venv/bin/python -m unittest discover -s tests -q
+.venv/bin/python -m compileall -q recorder tests examples
+MPLCONFIGDIR=/tmp/recorder-matplotlib .venv/bin/python -m examples.synthetic_demo
+git diff --check
+```
+
 ## Preparation
 
 Record Windows, OBS, Chrome and Zoom versions, monitor positions, resolutions,
@@ -148,3 +167,91 @@ classification false positives/negatives, spatial and temporal errors.
 
 Zoom compatibility stays **UNVERIFIED** until this real procedure is completed.
 A synthetic hook, a successful recording, or an OBS audio meter is not Zoom evidence.
+
+## H. Record-first workflow, fallback and FFmpeg 9 regression
+
+1. On the laptop, record `ffmpeg -version` and `ffprobe -version` (including the
+   reported FFmpeg 9.0.2 build), OBS 32.x, Chrome and Python versions. Run the test
+   suite from README, then open an existing session through Analyze a recording
+   without connecting OBS. Seek beginning/middle/end, step individual frames and
+   select button presses. Expected: actual frames display without any `vsync` option
+   error. Compare displayed content with the original video's player.
+2. In Record a session, select the actual Chrome window and Check recording setup.
+   Expected: a mouse-hook readiness probe, matched OBS source and visible page-area
+   preview. No five-point measurements are required before Start Recording.
+3. Reproduce the Windows UIA bottom-strip failure if the provider still exposes it.
+   Inspect Advanced → Calibration details: the approximately `[0,1043,1920,84]`
+   rectangle must be rejected with evidence, never shown as successful detection.
+   If the provider no longer reproduces it, report that fact; the synthetic rejection
+   test alone is not a new real-provider measurement.
+4. Decline manual selection once, then choose Mark webpage area. Keep Chrome fully
+   visible; click top-left/bottom-right webpage corners, inspect all edges, redraw
+   and confirm. Expected: normal recording becomes available with alignment review
+   recommended. The manual result must not claim experimental verification.
+5. Separately cancel selection and explicitly choose record now/align later. Verify
+   the OBS preview before starting. Record, stop and inspect the original/copy,
+   raw events, failed geometry/OBS evidence and synchronization observations. All
+   callbacks, including outside/uncertain ones, must remain. A failed source setup
+   is not a successful video test simply because raw mouse logging worked.
+6. After Stop, use Open Session and Show saved files. Confirm saved locations are
+   discoverable and previous session evidence has not been overwritten. Check error
+   communication for wrong password, disconnected OBS and failed video finalization.
+
+## I. Views, regions, exports and reversible correction
+
+1. Record a consenting operator navigating two visibly different layouts, returning
+   to one layout, scrolling, opening a panel and clicking outside Chrome. Note the
+   controlled action sequence. Stop; conduct the rest using saved data alone.
+2. Before analysis, hash `video.mkv`, `events.jsonl`, `metadata.json`, `sync.json` and
+   `calibration_observations.jsonl` using PowerShell `Get-FileHash`. Retain results
+   privately. If a file is absent in an older session, note its absence.
+3. Open analysis without OBS. Filter presses/releases/movements/scrolls and each
+   location class; select known actions and inspect frames. Verify event facts,
+   inferred location and researcher AOI labels remain visibly distinct.
+4. Mark view start/end using the playhead. Name Home, Editor and separate scrolled/
+   panel states, leaving an intentional unknown gap. Pick a saved reference in each.
+   Edit boundaries, split inside a view, merge two adjacent compatible views with
+   explicit confirmation, and delete a temporary view. Reconfirm affected layouts/
+   regions. Repeated visits must remain separate despite reused semantic labels.
+5. On a stable reference frame, draw/name Navigation and Search rectangles. Rename,
+   redraw, duplicate and delete a temporary region. Narrow a region's valid range;
+   select a reference within it. Copy to another view and verify confirmation is
+   required. Overlap two confirmed AOIs and verify common presses are ambiguous,
+   listed as candidates, and not counted twice.
+6. Open Interaction summary. Compare press/release counts and matching pairs to
+   trial notes and exported raw IDs. Include a drag and a long stationary pause:
+   a button pair must not claim an intentional click; silence longer than 0.25s
+   must not become full hover time. Check outside/unlabeled/uncertain exclusions.
+7. Toggle original image, clicks, trails, regions and density. Change opacity,
+   intensity and spread. Export and open the new run folder. Compare each clean
+   frame with the original recording, verify transparent PNG alpha and dimensions,
+   grid sums and separate view backgrounds. Unstable/scrolling intervals must not
+   receive a static overlay that falsely claims layout consistency.
+8. If a session has shifted overlays and usable geometry, select two or more known
+   diagonal reference presses, mark actual independent positions on their saved
+   frames, draw the webpage bounds and apply within ONE view. Inspect residual and
+   annotation uncertainty in Advanced. Compare on additional unused clicks. Undo
+   and verify original derived mapping is restored. A reference-fit residual alone
+   is not independent accuracy evidence. Other-app clicks must remain excluded;
+   resized/DPI-changed states must not inherit the correction.
+9. Close and reopen analysis; verify edits persist. Re-export after an edit: a new
+   run and previous annotation history must exist. Rehash the raw files: every hash
+   must match step 2. In a private copy of an old session, temporarily omit optional
+   QA annotations and then `sync.json`: qualitative video/views/AOIs must still open,
+   while missing timing disables event-to-view assignment rather than inventing it.
+
+## J. Windows 150% display scaling and GUI acceptance
+
+At 100%, 125% and **150%**, resize the recording and analysis windows on the laptop's
+usual display and mixed-DPI secondary monitor. Check Record/Analyze/Advanced tabs,
+password field, Start/Stop/Open buttons, player, playhead/timeline, view editing,
+AOI drawing, scrollbars, summaries, correction references and export controls.
+Open long calibration/quality evidence: dialogs must resize and scroll. Verify
+selection pixels after moving the GUI between monitors. Drag the analysis pane
+splitter to expose video and tables. Record any clipped/unreachable controls or
+mismatches; screen-aware sizing in code is not proof that Tk scaling works.
+
+Cloud automated results are reported separately from these laptop acceptance
+results. This upgrade has not been exercised in a real Windows GUI or against OBS
+32.x, FFmpeg 9 Windows binaries, actual Chrome UIA, laptop audio or Zoom Remote
+Control. Existing Windows success observations apply to the earlier tested build.

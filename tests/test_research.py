@@ -39,7 +39,7 @@ class ResearchTests(unittest.TestCase):
     def test_spatial_computed_is_not_verified_and_five_independent_targets(self):
         self.assertEqual(spatial_report([],[1000,800],'video')['status'],'computed')
         points=[[100,80],[900,80],[500,400],[100,720],[900,720]]
-        measures=[{'predicted':p,'observed':[p[0]+2,p[1]],'mapping_id':'one','event_id':str(n),'video_fingerprint':'video'} for n,p in enumerate(points)]
+        measures=[{'predicted':p,'observed':[p[0]+2,p[1]],'mapping_id':'one','event_id':str(n),'video_fingerprint':'video','reference_selection_uncertainty_px':2} for n,p in enumerate(points)]
         report=spatial_report(measures,[1000,800],'video')
         self.assertEqual(report['status'],'experimentally_verified')
         self.assertEqual(report['max_error_px'],2)

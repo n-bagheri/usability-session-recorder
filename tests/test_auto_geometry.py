@@ -9,7 +9,7 @@ class AutoGeometryTests(unittest.TestCase):
     def test_unique_viewport_nested_docs_and_ambiguous_panels(self):
         doc = {'rect':[-1000,120,900,600],'offscreen':False}
         nested = {'rect':[-900,200,100,100],'offscreen':False}
-        self.assertEqual(choose_document([nested,doc],[-1000,0,1000,800]),doc)
+        self.assertEqual(choose_document([nested,doc],[-1000,0,1000,800])['rect'],doc['rect'])
         with self.assertRaises(ValueError):
             choose_document([nested,{'rect':[-700,200,100,100]}],[-1000,0,1000,800])
         with self.assertRaises(ValueError):

@@ -3,7 +3,7 @@ import copy
 import threading
 import time
 from .targeting import calibrate, same_identity
-from .obs_geometry import read_obs_capture, fingerprint
+from .obs_geometry import read_obs_capture, read_obs_evidence, fingerprint
 
 
 class CalibrationMonitor:
@@ -33,11 +33,18 @@ class CalibrationMonitor:
                       'dpi':s['dpi'],'identity':s['identity'],'maximized':s.get('maximized'),
                       'monitor':s.get('monitor'),'status':'computed','observed_ns':time.perf_counter_ns()}
         except Exception as exc:
-            result = {'status':'invalid','reason':str(exc),'observed_ns':time.perf_counter_ns()}
+            result = {'status':'invalid','reason':str(exc),'observed_ns':time.perf_counter_ns(),
+                      'viewport_detection_evidence':getattr(exc,'evidence',None),'window_observation':locals().get('s')}
+        if result['status']=='invalid':
+            try:result['obs_capture_evidence']=read_obs_evidence(self.obs,self.selected,self.windows())
+            except Exception as exc:result['obs_evidence_error']=str(exc)
         result['measurement_interval_ns']=[started,time.perf_counter_ns()]
         if result['measurement_interval_ns'][1]-started>1_500_000_000:
             result.update(status='invalid',reason='Automatic calibration took over 1.5 seconds; measurement is not fresh enough')
         state={k:result.get(k) for k in ('viewport','mapping','client_rect','dpi','identity','monitor','status','reason')}
+        if result['status']=='invalid':
+            state['window_geometry']={k:(result.get('window_observation') or {}).get(k) for k in ('identity','client_rect','dpi','monitor','maximized')}
+            state['obs_capture_evidence']=result.get('obs_capture_evidence')
         result['state_id']=fingerprint(state)
         self.latest = result
         try:self.write_journal(result)

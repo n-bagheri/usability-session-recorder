@@ -4,9 +4,13 @@ A standalone Python/Tkinter research recorder. **OBS Studio records all video an
 audio**; this app controls OBS v5, retains global Windows mouse input, calibrates
 Chrome/OBS geometry, and reviews saved video without accessing or modifying MapGen.
 
-New calibration and QA are **not yet validated on real Windows/Zoom hardware**.
-A computed transform is not proof of accuracy. Measurements and explicit uncertainty
-are part of the workflow, not optional claims added to a heatmap.
+**Record first. Interpret later.** Collect video and all mouse evidence during the
+study, then define views, label visual regions and export per-view heatmaps using
+the saved recording. Independent quality measurements are available under Advanced;
+they are not a prerequisite for recording or qualitative review.
+
+This upgrade is **not yet validated on real Windows/OBS/Zoom hardware**. Computed
+alignment and researcher-confirmed layouts are distinct from measured accuracy.
 
 ## Windows setup
 
@@ -39,39 +43,69 @@ are part of the workflow, not optional claims added to a heatmap.
 6. Chrome must expose a native UI Automation webpage **Document**. If auto-calibration
    reports none, check Chrome accessibility support; where appropriate close Chrome
    after saving work and launch it with `--force-renderer-accessibility`. Recorder
-   does not change Chrome profiles or enable debugging. A screenshot-guided manual
-   fallback is available in Advanced and remains explicitly unverified.
+   does not change Chrome profiles or enable debugging. If detection fails, Recorder
+   offers a screenshot-guided manual fallback in the normal recording flow. Manual
+   boundaries remain unverified until independently measured.
 
 Dependencies are the existing OBS/pynput/NumPy/Matplotlib stack plus Windows-only
 `comtypes` for read-only UI Automation. Pillow, also used by Matplotlib, is declared explicitly for supported image APIs. No browser
 extension, DOM injection, custom recording engine, MapGen hooks or `.bat` launcher.
 
-## Normal session: six steps, all in the GUI
+## Record a session
 
-1. **Select MapGen Chrome Window.** Windows refresh automatically on launch; use
-   Refresh after opening/closing windows. Titles help the operator choose; HWND,
-   process ID/start time and class establish identity. Do not reuse old handles.
-2. **Connect OBS.** Password entry is cleared after connection. Source validation
-   is completed with Auto-Calibrate; connection alone does not establish readiness.
-3. **Auto-Calibrate and Verify.** The app reads the UIA webpage Document rectangle
-   in physical screen pixels (not Chrome's whole client area). It reads OBS source
-   settings, source dimensions, item position/scale/crop/bounds/alignment, canvas and
-   output dimensions. Black margins are part of the computed recorded-frame mapping.
-   Inspect the green boundary preview. An ambiguous or unsupported setup blocks
-   calibration with a reason. **Verify Alignment** offers a separate calibration
-   board and explains the saved-video five-target measurement procedure.
-4. **Start Session.** Input capture begins before OBS start confirmation. Two
-   consecutive active/unpaused status samples are required; no duplicate StartRecord
-   is sent. An uncertain start keeps the log alive. Advanced → Check OBS retries
-   confirmation only. The optional countdown runs without freezing the GUI.
-5. **Stop Session.** OBS must acknowledge Stop and report settled inactivity; then a stable file is copied and decoded
-   to confirm saved video frames exist. Complete means the copied video was indexed;
-   it does not imply spatial, temporal or Zoom validation. Stop/copy failures preserve
-   original files. Do not start/stop/pause OBS externally during a session.
-6. **Review / Generate Analysis.** Select the session folder. View actual decoded
-   frames, play a muted frame preview or open the original video with audio, step
-   frames, set the participant analysis interval, label views/states, and measure QA.
-   Then export PNG/CSV/JSON. All long decoding/export jobs run in background workers.
+1. **Select the MapGen Chrome window**, enter the OBS password and choose **Check
+   recording setup**. Recorder checks the OBS connection and mouse hook, detects
+   the webpage area, and matches the OBS Window Capture source. Inspect the boundary
+   preview. If detection fails, **Mark webpage area** lets you select two corners
+   on a screenshot and redraw before confirming. No five-point test is required.
+2. **Start Recording.** Mouse logging starts before settled OBS confirmation.
+   Startup delays remain in synchronization evidence. An uncertain start preserves
+   logging; Advanced → Check OBS recording confirmation retries without sending a
+   duplicate start. If alignment is unavailable, you can explicitly choose to save
+   raw evidence now and reconstruct alignment later. Check the OBS preview first.
+3. **Stop Recording.** Recorder waits for OBS to stop, copies its finalized original
+   and checks that saved frames can be decoded. Failures are reported; successful
+   saving does not imply validated alignment or audio. Do not externally start,
+   stop or pause OBS during a session.
+4. **Open Session** opens analysis. **Show saved files** reveals the session folder.
+   The separate **Analyze a recording** tab opens older sessions without OBS.
+
+## Analyze a recording
+
+1. **Review events:** play/seek/step actual saved frames; open the original video for
+   audio. Toggle click markers, mouse trails and regions. Filter presses, releases,
+   movements, scrolling and inside/outside/uncertain classifications; select an event
+   to seek to its estimated video time. Facts, inferred locations and researcher
+   region labels have separate columns. Unverified timing is always disclosed.
+2. **Define views:** mark a start, seek to an end and finish the view, or add/edit its
+   times and labels. Choose a reference frame inside it. Split, merge adjacent
+   intervals with confirmation, or delete them. Unknown gaps stay unclassified.
+   Confirm a stable layout only after reviewing the whole interval; scrolling,
+   panels, navigation and loading may need separate states. Repeated visits can
+   reuse semantic labels but are exported separately.
+3. **Label regions:** select a view/reference frame, draw a rectangle and name it.
+   Edit its geometry, label, semantic ID and valid time range; duplicate or copy it
+   to another view. Copies across views require confirmation. **Interaction summary**
+   shows assigned presses, complete button pairs, movement samples and partial
+   observed cursor seconds. These are visual Areas of Interest (AOIs), not DOM elements.
+4. **Heatmaps & export:** preview movement or button-press density, adjust opacity,
+   intensity and spread, then export. Each stable view uses its own actual recorded
+   frame. Exports include clean PNGs, transparent layers, composite heatmaps, labeled
+   regions, numbered presses, raw grids, event CSV and region JSON/CSV. Open the exports
+   folder to inspect a versioned run. Unstable/unmapped states retain clean frames
+   and event reports but do not receive a misleading static density overlay.
+5. **Advanced Validation** contains optional spatial/timing checks, participant bounds,
+   visual-change suggestions and correction of shifted click overlays. For correction,
+   select at least two widely separated raw clicks in one view, mark their actual
+   visible positions on saved frames, draw the webpage boundary, then apply. Both
+   axes need separated references. Undo disables the correction; raw data stays intact.
+   Corrections require recorded window geometry, matching identity and capture state.
+   They cannot reconstruct missing event times or unknown historical input dispatch.
+
+Annotations save automatically with history. Reopen the same session to resume.
+A missing synchronization origin still permits qualitative video review, views and
+regions, but no event-to-video assignment is fabricated. See [annotation and metric
+rules](docs/ANALYSIS.md) for the exact saved format and counting definitions.
 
 The participant need not interact with Recorder. Advanced provides optional
 **Ctrl+Alt+Shift+F9** start/stop and **Ctrl+Alt+Shift+F10** task-boundary shortcuts.
@@ -88,7 +122,11 @@ raw dataset and are distinguished in derived reports.
 ## Automatic calibration: what it does and does not establish
 
 UI Automation accepts only an unambiguous, visible, enclosing Document contained
-inside the Chrome client rectangle. No fixed toolbar height or visual guess is
+inside the Chrome client rectangle. Conservative relative-size/edge sanity checks
+reject short bottom strips (including the reported 1920×84 result), narrow or clipped
+candidates. The provider is read twice and checked against monitor bounds. Rejection
+retains its evidence and offers manual selection. These checks can reject unusual
+legitimate browser layouts; they do not establish experimental accuracy. No fixed toolbar height or visual guess is
 used. HWND/process/class and API hit-testing still govern inside/outside attribution.
 A default 0.5-second monitor rechecks geometry/OBS; measurements older than 1.5s,
 changed client size/DPI/monitor or failed APIs make events uncertain until refreshed.
@@ -110,7 +148,7 @@ are rejected. Saved-video QA is needed to prove the intended source was captured
 The manual fallback displays a captured client-area image with guides. Draw the
 content rectangle and explicitly confirm it; it is invalidated on size, DPI, title
 or window-mode changes. It is not the default and is never called automatically
-accurate. Advanced can explicitly allow uncalibrated raw recording; attribution
+accurate. The recording flow can explicitly allow uncalibrated raw recording; attribution
 then stays uncertain and overlays are not fabricated.
 
 An optional CDP approach was investigated: `Page.getLayoutMetrics` gives CSS viewport
@@ -192,7 +230,10 @@ saved-frame context. Raw density grids are exported as CSV. The metric is **rece
 mouse events per 128×128 recorded-frame bin**, not gaze, attention or stationary dwell.
 Palette intensity is normalized to each image's maximum; compare counts, not colors
 across images. Optional Gaussian smoothing is sigma=1 bin and count-preserving;
-raw counts always remain. Small click samples should use numbered clicks, not
+raw counts always remain. The GUI exposes adjustable Gaussian spread in grid bins,
+opacity and intensity; transparent overlays accompany composites. Separate partial
+cursor-time outputs use only consecutive mapped callbacks within 0.25 seconds;
+long event-driven silence is unknown, not stationary hover. Small click samples should use numbered clicks, not
 exaggerated smoothed hotspots. View dwell means annotated interval duration, not
 where the mouse rested. Movement path is a conservative sum over consecutive
 same-layout move callbacks; gaps/outside events are not bridged.
@@ -206,7 +247,10 @@ all page popups/same-title tab changes. PTS gaps can reflect dropped frames or V
 no automatic cause is inferred. OS-level input coalescing and hook/disk performance
 must also be checked on the actual laptop.
 
-Old sessions can be opened if their finalized video and time origin exist. Legacy
+Old sessions can be opened with their finalized video, metadata and raw events.
+A missing time origin disables timed mouse assignment but keeps qualitative review.
+If metadata omits the video filename, a single unambiguous `video.*` is accepted.
+Corrupt derived PTS/PNG caches are rebuilt; originals are never repaired in place. Legacy
 manual `frame_mapping.json` is supported when dimensions match; without one, old
 inside/outside data is retained but frame overlay stays unavailable. Existing
 `python -m recorder.tools SESSION` and legacy heatmap APIs remain for compatibility;
@@ -228,7 +272,10 @@ The synthetic demo creates a mock Home/Editor session and overlays under
 `sessions/synthetic-demo/`, using locally generated pictures and a synthetic MKV.
 [Example outputs](examples/README.md) are explicitly synthetic, not MapGen/Windows
 accuracy evidence. Saved-video integration tests exercise real FFmpeg decoding,
-PTS selection, frame pixels, per-state separation and raw-log preservation.
+PTS selection, frame pixels, per-state separation, AOI assignment, correction/undo
+and SHA-256 preservation of video, mouse, metadata, sync and calibration journal.
+The decoder no longer uses the removed `-vsync` option; actual FFmpeg 9 Windows
+execution remains a manual acceptance item.
 
 See [Windows acceptance tests and evidence matrix](docs/VALIDATION.md) for the
 required inside/outside, five-target spatial, repeatability, temporal, dynamic-view,
